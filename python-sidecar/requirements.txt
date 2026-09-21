@@ -98,9 +98,22 @@ audioread>=3.0.0
 whisperx==3.8.7rc1
 
 # --- Pitch tracking ---
-# SwiftF0 é mais leve/rápido que CREPE e roda bem em 8GB de VRAM
-# (versão corrigida - o PyPI só tem até 0.1.x até o momento desta escrita)
-swift-f0>=0.1.2
+# SwiftF0 é mais leve/rápido que CREPE e roda bem em 8GB de VRAM.
+#
+# TETO EM <0.3 DE PROPÓSITO: a 0.2.0 quebrou a API da 0.1.x em TRÊS pontos
+# de uma vez (o construtor não aceita mais os parâmetros de análise, o
+# `detect_from_array` virou `detect`, e o campo `voicing` sumiu) e derrubou
+# a geração no meio de uma atualização de bibliotecas, com a mensagem
+# "SwiftF0.__init__() got an unexpected keyword argument
+# 'confidence_threshold'" - relatado pelo usuário em 20/09/2026. O
+# pipeline/pitch.py já está na API 0.2.x; o teto é pra próxima quebra não
+# chegar do mesmo jeito, sem aviso, no meio de uma geração.
+#
+# O extra [audio] traz o `soxr`, que a lib IMPORTA pra reamostrar (nosso
+# vocal vem a 44,1 kHz e o modelo roda a 16 kHz) mas só declara como extra.
+# Sem ele funcionava por sorte: o soxr entrava de carona no librosa. É a
+# MESMA armadilha do audioread anotada mais acima neste arquivo.
+swift-f0[audio]>=0.2.0,<0.3
 # Fallback / comparação (opcional, mais pesado, usa TensorFlow):
 # crepe>=0.0.13
 # tensorflow>=2.10,<2.11  # última versão com suporte CUDA nativo no Windows

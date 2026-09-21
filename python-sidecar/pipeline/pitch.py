@@ -3,23 +3,40 @@ pitch.py
 Etapa 5 da pipeline: extrair a frequência fundamental (F0) do vocal isolado
 e converter para o formato de pitch do UltraStar (semitons relativos a C4=0).
 
-API REAL do swift-f0 (corrigida em 05/07/2026 após erro de suposição inicial -
-a API original documentada no código era ilustrativa e estava errada):
+API REAL do swift-f0 0.2.x (atualizada em 20/09/2026 - a 0.2.0 QUEBROU a API
+da 0.1.x em três pontos de uma vez; ver nota de migração no fim deste bloco):
 
     from swift_f0 import SwiftF0
 
-    detector = SwiftF0(confidence_threshold=0.9, fmin=46.875, fmax=2093.75)
-    result = detector.detect_from_array(audio_array, sample_rate)  # ou detect_from_file(path)
+    detector = SwiftF0()                                   # sem parâmetros de análise
+    result = detector.detect(audio_array, sample_rate,     # ou detect_file(path)
+                             fmin=46.875, fmax=2093.75)
 
     # PitchResult é um conjunto de arrays paralelos, um valor por frame:
     #   result.pitch_hz    -> F0 estimado (Hz) por frame
     #   result.confidence  -> confiança do modelo (0-1) por frame
     #   result.timestamps  -> centro de cada frame em segundos
-    #   result.voicing     -> bool por frame (já usa confidence_threshold internamente)
+    #   result.audio       -> o áudio já reamostrado para 16 kHz
 
 Não existe parâmetro `model_size` (isso era uma suposição incorreta de quem
 escreveu a primeira versão deste arquivo). O detector sempre roda o mesmo
 modelo; o que se ajusta é o threshold de confiança e a faixa de frequência.
+
+MIGRAÇÃO 0.1.x -> 0.2.0 (relatado pelo usuário: "SwiftF0.__init__() got an
+unexpected keyword argument 'confidence_threshold'", depois de um update das
+bibliotecas). Três mudanças, não uma - a mensagem de erro só mostra a
+primeira:
+  1. o construtor não aceita mais confidence_threshold/fmin/fmax;
+  2. `detect_from_array` virou `detect`, e é ela que recebe fmin/fmax;
+  3. `result.voicing` DEIXOU DE EXISTIR - quem decide o que é vozeado agora
+     somos nós, comparando `confidence` com o nosso threshold.
+
+Conferido antes de migrar, com as duas versões instaladas lado a lado e o
+mesmo áudio: num sinal parecido com voz (série harmônica com vibrato), a
+0.2.0 concorda com a 0.1.2 em 124 dos 125 quadros no threshold de 0.85, com
+diferença mediana de 1,3 Hz no F0. O threshold de 0.85 abaixo continua
+valendo. (Num seno PURO as duas divergem muito - a 0.2.0 tem bem menos
+confiança num tom artificial - mas isso não é canto e não aparece aqui.)
 
 NOTA para canto: fmin/fmax padrão (46.875-2093.75 Hz, G1 a C7) já cobre bem
 a faixa vocal humana em canto. Se detectar oitava errada com frequência,
@@ -79,7 +96,12 @@ class PitchExtractor:
         fmin: float = 46.875,
         fmax: float = 2093.75,
     ):
-        self.model = SwiftF0(confidence_threshold=confidence_threshold, fmin=fmin, fmax=fmax)
+        # Desde a 0.2.0 o detector não recebe nada na construção: a faixa de
+        # frequência vai em cada chamada de detect(), e o threshold é nosso.
+        self.model = SwiftF0()
+        self.confidence_threshold = confidence_threshold
+        self.fmin = fmin
+        self.fmax = fmax
 
     def extract_segment_pitch(self, audio_path: str, start_s: float, end_s: float) -> PitchResult:
         track = self.extract_word_track(audio_path, start_s, end_s)
@@ -102,12 +124,15 @@ class PitchExtractor:
             empty = np.array([])
             return PitchTrack(timestamps=empty, pitch_hz=empty, confidence=empty, voicing=np.array([], dtype=bool))
 
-        result = self.model.detect_from_array(segment, sr)
+        result = self.model.detect(segment, sr, fmin=self.fmin, fmax=self.fmax)
+        confidence = np.asarray(result.confidence)
         return PitchTrack(
             timestamps=np.asarray(result.timestamps) + start_s,  # absoluto
             pitch_hz=np.asarray(result.pitch_hz),
-            confidence=np.asarray(result.confidence),
-            voicing=np.asarray(result.voicing, dtype=bool),
+            confidence=confidence,
+            # A 0.2.0 não devolve mais `voicing`: o corte é nosso, e é o mesmo
+            # que a 0.1.x fazia internamente com o threshold que passávamos.
+            voicing=confidence >= self.confidence_threshold,
         )
 
     def summarize_track_window(self, track: PitchTrack, start_s: float, end_s: float) -> PitchResult:

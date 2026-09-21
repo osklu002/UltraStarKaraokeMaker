@@ -295,6 +295,53 @@ if ($missingLibs.Count -eq 0) {
 }
 
 # ---------------------------------------------------------------------------
+# 5c. Deno - the JavaScript runtime yt-dlp now needs for YouTube
+# ---------------------------------------------------------------------------
+# YouTube hands out JavaScript challenges, and yt-dlp solves them by running a
+# solver script in an external JS runtime. With no runtime installed it prints
+#
+#   WARNING: [youtube] No supported JavaScript runtime could be found. Only
+#   deno is enabled by default ... YouTube extraction without a JS runtime has
+#   been deprecated, and some formats may be missing
+#
+# Today that costs formats; "deprecated" means it will eventually cost the
+# download itself. Keeping yt-dlp up to date does NOT help - the runtime is a
+# separate program yt-dlp shells out to.
+#
+# Deno is the one yt-dlp enables by default, so dropping deno.exe into this
+# same bin folder is the whole fix: the sidecar already puts this folder at
+# the FRONT of its PATH before any download runs (ensure_ffmpeg_on_path in
+# pipeline/proc_utils.py, there for whisperx/pyannote), and PATH is exactly
+# where yt-dlp looks for a runtime. No flag to pass, nothing else to wire.
+#
+# NON-FATAL by design: without it, downloads behave exactly as they do today.
+Write-Step "Setting up Deno (the JavaScript runtime yt-dlp uses for YouTube)"
+
+$denoExe = Join-Path $binDir "deno.exe"
+if (Test-Path $denoExe) {
+    Write-Ok "Deno is already in $binDir"
+} else {
+    try {
+        $denoUrl = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip"
+        $denoZip = Join-Path $env:TEMP "uskmaker-deno.zip"
+        $denoDir = Join-Path $env:TEMP "uskmaker-deno-extract"
+        Write-Host "    Downloading Deno (~41 MB)..."
+        Invoke-WebRequest -Uri $denoUrl -OutFile $denoZip -UseBasicParsing
+        if (Test-Path $denoDir) { Remove-Item -Recurse -Force $denoDir }
+        Expand-Archive -Path $denoZip -DestinationPath $denoDir -Force
+        $srcDeno = Get-ChildItem -Path $denoDir -Recurse -Filter "deno.exe" | Select-Object -First 1
+        if (-not $srcDeno) { throw "deno.exe was not found inside the downloaded zip." }
+        Copy-Item $srcDeno.FullName $denoExe -Force
+        Remove-Item $denoZip -Force -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $denoDir -ErrorAction SilentlyContinue
+        Write-Ok "Deno installed in $binDir"
+    } catch {
+        Write-Warn2 "Could not install Deno: $($_.Exception.Message)"
+        Write-Warn2 "  Not fatal - downloads still work, but YouTube may offer fewer formats."
+    }
+}
+
+# ---------------------------------------------------------------------------
 # 6. Install dependencies via uv (the slow step - large downloads)
 # ---------------------------------------------------------------------------
 # TORCH IS PINNED TO THE SERIES WHISPERX REQUIRES (torch~=2.8.0), and that is
