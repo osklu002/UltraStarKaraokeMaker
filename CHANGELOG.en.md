@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.21.3] — 2026-09-25 (contribution by [@DJ-Joel](https://github.com/DJ-Joel))
+
 ### Fixed
 
 - **Generating a song again silently overwrote a finished, hand-corrected package.** The package folder is named after the artist and title, so a second generation of the same song lands in the same folder and rewrites its `.txt` - including every correction made in the review screen - with no question asked and no copy kept. Found in a review of the project. The app now asks first, once for the whole batch, naming the songs that are already finished. And as a net for a question answered without reading it, a generation into a finished folder first copies the `.txt` and `song_data.json` to `.bak`; if that copy cannot be made, nothing is generated and nothing is overwritten. `.bak` on purpose: the game only reads `.txt`, so the copy does not show up as a second song, and cleaning the helper files leaves it alone. It keeps one copy - the version from just before the latest generation.

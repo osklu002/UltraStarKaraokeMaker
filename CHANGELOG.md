@@ -6,6 +6,8 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+## [0.21.3] — 2026-09-25 (contribuição [@DJ-Joel](https://github.com/DJ-Joel))
+
 ### Corrigido
 
 - **Gerar uma música de novo sobrescrevia sem aviso um pacote pronto e corrigido à mão.** A pasta do pacote leva o nome do artista e do título, então uma segunda geração da mesma música cai na mesma pasta e reescreve o `.txt` - com todas as correções feitas na tela de revisão - sem perguntar nada e sem guardar cópia. Achado numa revisão do projeto. O app agora pergunta antes, uma vez pela leva inteira, nomeando as músicas que já estão prontas. E, como rede para uma pergunta respondida sem ler, uma geração numa pasta pronta primeiro copia o `.txt` e o `song_data.json` para `.bak`; se a cópia não puder ser feita, nada é gerado e nada é sobrescrito. `.bak` de propósito: o jogo só lê `.txt`, então a cópia não aparece como música repetida, e a limpeza dos auxiliares não mexe nela. Guarda uma cópia só - a versão de logo antes da última geração.
