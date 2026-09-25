@@ -46,6 +46,7 @@ const STRINGS = {
     updateErrorPrefix: "Falha na atualizacao:",
     lyricsPickedByTiming: "Letra sincronizada encontrada (tempos conferem com esta gravação).",
     lyricsTimingSuspect: "Letra sincronizada encontrada, mas os tempos NÃO cabem nesta gravação - provável versão diferente. Confira antes de gerar.",
+    overwriteConfirm: "Já prontas na pasta de saída:\n\n{songs}\n\nGerar de novo substitui o pacote pronto — inclusive as correções feitas na tela de revisão. Uma cópia de segurança da versão atual fica ao lado (.bak).\n\nGerar mesmo assim?",
     lyricsTimingConfirm: "A letra sincronizada vai até {lrc}, mas esta gravação tem {audio}.\n\nQuase sempre é letra de OUTRA versão (álbum x edit, ao vivo, remix). O alinhamento vai descartá-la e seguir só com a IA, o que costuma sair pior.\n\nGerar mesmo assim?",
 
     // ---- fonte ----
@@ -289,6 +290,7 @@ const STRINGS = {
     revNoAudio: "O arquivo de áudio do pacote não foi encontrado — a timeline funciona, mas sem playback.",
     revLoadError: "Erro ao carregar o pacote.",
     revSaveError: "Erro ao salvar.",
+    revActionFailedKept: "Suas alterações continuam aqui — nada foi perdido. Resolva o problema (por exemplo, feche o arquivo em outro programa) e tente de novo.",
     revConfirmDiscard: "Há alterações não salvas. Sair mesmo assim e descartá-las?",
     revToForm: "Gerar de novo",
     revToFormHint: "Devolve esta música ao formulário principal - nome e link já preenchidos - para gerar outra vez.",
@@ -364,6 +366,7 @@ const STRINGS = {
     updateErrorPrefix: "Update failed:",
     lyricsPickedByTiming: "Synced lyrics found (timings match this recording).",
     lyricsTimingSuspect: "Synced lyrics found, but their timings do NOT fit this recording - probably a different version. Check before generating.",
+    overwriteConfirm: "Already finished in the output folder:\n\n{songs}\n\nGenerating again replaces the finished package — including any corrections you made in the review screen. A backup copy of the current version is kept next to it (.bak).\n\nGenerate anyway?",
     lyricsTimingConfirm: "The synced lyrics run to {lrc}, but this recording is {audio}.\n\nThat is almost always lyrics from a DIFFERENT version (album vs edit, live, remix). Alignment will discard them and fall back to the AI alone, which usually comes out worse.\n\nGenerate anyway?",
     envNoVorbis: "The installed ffmpeg lacks libvorbis support (needed for the package's .ogg audio) — use a \"full\" build.",
 
@@ -601,6 +604,7 @@ const STRINGS = {
     revNoAudio: "The package's audio file was not found — the timeline works, but without playback.",
     revLoadError: "Error loading the package.",
     revSaveError: "Error while saving.",
+    revActionFailedKept: "Your edits are still here — nothing was lost. Fix the problem (for example, close the file in another program) and try again.",
     revConfirmDiscard: "There are unsaved changes. Leave anyway and discard them?",
     revToForm: "Generate again",
     revToFormHint: "Sends this song back to the main form - name and link already filled in - so it can be generated again.",

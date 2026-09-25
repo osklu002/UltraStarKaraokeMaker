@@ -271,6 +271,12 @@ export default function ReviewScreen({ outDir, onClose, onSendToForm }: Props) {
   // qualquer nota do grupo move todas juntas.
   const [multiSelected, setMultiSelected] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  // Erro de uma AÇÃO (Salvar, Refazer vídeo) - separado de `error` de
+  // propósito. `error` troca a tela inteira pela caixa de erro, o que é
+  // certo quando o pacote nem carregou; numa falha ao SALVAR isso sumia com
+  // o editor e com todas as alterações não salvas (achado na revisão do
+  // projeto, 24/09/2026). Este aqui aparece como aviso, com o editor intacto.
+  const [actionError, setActionError] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [dirty, setDirty] = useState(false);
@@ -1846,13 +1852,14 @@ export default function ReviewScreen({ outDir, onClose, onSendToForm }: Props) {
     if (!s) return;
     setSaving(true);
     setStatusMsg(null);
+    setActionError(null);
     try {
       const result = await invoke<SaveResult>("save_song", { outDir, song: s, lang });
       setWarnings(result.warnings);
       setDirty(false);
       setStatusMsg(t("revSaved", { path: result.txtPath }));
     } catch (err) {
-      setError(typeof err === "string" ? err : t("revSaveError"));
+      setActionError(typeof err === "string" ? err : t("revSaveError"));
     } finally {
       setSaving(false);
     }
@@ -1872,11 +1879,13 @@ export default function ReviewScreen({ outDir, onClose, onSendToForm }: Props) {
     }
     setRegenerating(true);
     setStatusMsg(t("regenVideoRunning"));
+    setActionError(null);
     try {
       await invoke<string>("regenerate_video", { outDir, lang });
       setStatusMsg(t("regenVideoDone"));
     } catch (err) {
-      setError(typeof err === "string" ? err : t("revSaveError"));
+      setStatusMsg(null);
+      setActionError(typeof err === "string" ? err : t("revSaveError"));
     } finally {
       setRegenerating(false);
     }
@@ -2264,6 +2273,15 @@ export default function ReviewScreen({ outDir, onClose, onSendToForm }: Props) {
       )}
 
       {statusMsg && <div className="result-box slim">{statusMsg}</div>}
+      {actionError && (
+        <div className="error-box">
+          <strong>{t("errorPrefix")}</strong> {actionError}
+          <p>{t("revActionFailedKept")}</p>
+          <button className="secondary" onClick={() => setActionError(null)}>
+            {t("revClose")}
+          </button>
+        </div>
+      )}
       {warnings.length > 0 && (
         <div className="error-box">
           <strong>{t("revWarnings")}</strong>

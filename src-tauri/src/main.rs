@@ -110,6 +110,7 @@ fn tr(lang: &str, key: &str) -> &'static str {
         "server_start" => if en { "Error starting the persistent sidecar: {err}" } else { "Erro ao iniciar o sidecar persistente: {err}" },
         "server_stdin" => if en { "Couldn't get the sidecar's stdin." } else { "Não consegui obter a stdin do sidecar." },
         "server_send" => if en { "Error sending the job to the sidecar: {err}" } else { "Erro ao enviar job ao sidecar: {err}" },
+        "backup_failed" => if en { "The song already has a finished package, and the backup copy of '{path}' could not be made: {err}\nNothing was overwritten. Close the file if another program has it open, then try again." } else { "A música já tem um pacote pronto, e não foi possível fazer a cópia de segurança de '{path}': {err}\nNada foi sobrescrito. Feche o arquivo se outro programa estiver com ele aberto e tente de novo." },
         "outdir_create" => if en { "Error creating output folder '{path}': {err}" } else { "Erro ao criar pasta de saída '{path}': {err}" },
         "write_lyrics" => if en { "Error writing the lyrics file: {err}" } else { "Erro ao gravar arquivo de letra: {err}" },
         "write_synced" => if en { "Error writing the synced lyrics: {err}" } else { "Erro ao gravar letra sincronizada: {err}" },
@@ -528,6 +529,42 @@ async fn ensure_server_and_send(
     Ok(())
 }
 
+/// O `.txt` final de uma música: `<pasta de saída>/<Artista - Título>/<Artista - Título>.txt`.
+/// Mesmo nome que run_pipeline e save_song usam.
+fn finished_txt_path(out_dir: &str, artist: &str, title: &str) -> PathBuf {
+    let name = sanitize_path_component(&format!("{} - {}", artist, title));
+    PathBuf::from(out_dir).join(&name).join(format!("{}.txt", name))
+}
+
+/// A música já tem um pacote pronto nesta pasta de saída? A interface chama
+/// isto ANTES de gerar, pra perguntar ao usuário: gerar de novo sobrescreve o
+/// `.txt` - inclusive as correções feitas à mão na tela de revisão (achado na
+/// revisão do projeto, 24/09/2026: sobrescrevia sem aviso e sem cópia).
+#[tauri::command]
+fn finished_package_exists(out_dir: String, artist: String, title: String) -> bool {
+    finished_txt_path(&out_dir, &artist, &title).is_file()
+}
+
+/// Se a pasta já tem uma música pronta (`<base>.txt`), copia o `.txt` e o
+/// `song_data.json` (o que a tela de revisão abre) para `*.bak` antes da nova
+/// geração sobrescrever os dois. Guarda UMA cópia: a versão de logo antes da
+/// última geração. `.bak` de propósito: o jogo só lê `.txt`, então a cópia
+/// não aparece como música repetida, e a limpeza de auxiliares não apaga
+/// `.bak` (ver is_aux_package_file).
+fn backup_finished_package(out_dir: &Path, base: &str) -> Result<(), (PathBuf, std::io::Error)> {
+    let txt_name = format!("{}.txt", base);
+    if !out_dir.join(&txt_name).is_file() {
+        return Ok(()); // música nova (ou geração anterior que não terminou)
+    }
+    for name in [txt_name.as_str(), "song_data.json"] {
+        let src = out_dir.join(name);
+        if src.is_file() {
+            std::fs::copy(&src, out_dir.join(format!("{}.bak", name))).map_err(|e| (src.clone(), e))?;
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn run_pipeline(
     app: tauri::AppHandle,
@@ -544,10 +581,21 @@ async fn run_pipeline(
     // música dentro do diretório Songs do jogo). Reprocessar a mesma música
     // cai na mesma subpasta e reaproveita os intermediários.
     let package_folder = sanitize_path_component(&format!("{} - {}", input.artist, input.title));
-    let out_dir = PathBuf::from(&input.out_dir).join(package_folder);
+    let out_dir = PathBuf::from(&input.out_dir).join(&package_folder);
     std::fs::create_dir_all(&out_dir).map_err(|e| {
         tr(lang, "outdir_create")
             .replace("{path}", &out_dir.display().to_string())
+            .replace("{err}", &e.to_string())
+    })?;
+
+    // Música JÁ PRONTA nesta pasta: guarda uma cópia antes de sobrescrever.
+    // A interface já perguntou antes de gerar (finished_package_exists); isto
+    // é a rede de proteção pra quem confirmou sem ler, ou gerou pela fila.
+    // Se a cópia falhar, NÃO gera - sobrescrever sem cópia é justamente o
+    // que isto existe pra evitar.
+    backup_finished_package(&out_dir, &package_folder).map_err(|(path, e)| {
+        tr(lang, "backup_failed")
+            .replace("{path}", &path.display().to_string())
             .replace("{err}", &e.to_string())
     })?;
 
@@ -1466,6 +1514,58 @@ mod sanitize_tests {
 }
 
 #[cfg(test)]
+mod finished_package_tests {
+    use super::{backup_finished_package, clean_song_extras, finished_package_exists, finished_txt_path};
+
+    fn fresh_dir(tag: &str) -> std::path::PathBuf {
+        let base = std::env::temp_dir().join(format!("usk_{}_{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        base
+    }
+
+    #[test]
+    fn acha_o_txt_com_o_mesmo_nome_que_a_geracao_usa() {
+        let p = finished_txt_path("C:/Karaoke", "AC/DC", "Who?");
+        assert!(p.ends_with("AC-DC - Who/AC-DC - Who.txt"), "{}", p.display());
+    }
+
+    #[test]
+    fn musica_nova_nao_e_pronta_e_nao_ganha_copia() {
+        let base = fresh_dir("pkg_new");
+        let out = base.to_string_lossy().to_string();
+        assert!(!finished_package_exists(out.clone(), "A".into(), "B".into()));
+        let dir = base.join("A - B");
+        std::fs::create_dir_all(&dir).unwrap();
+        // geração anterior que não terminou: tem song_data.json mas não o .txt
+        std::fs::write(dir.join("song_data.json"), "{}").unwrap();
+        assert!(!finished_package_exists(out, "A".into(), "B".into()));
+        backup_finished_package(&dir, "A - B").unwrap();
+        assert!(!dir.join("song_data.json.bak").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn musica_pronta_ganha_copia_do_txt_e_do_json() {
+        let base = fresh_dir("pkg_done");
+        let out = base.to_string_lossy().to_string();
+        let dir = base.join("A - B");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("A - B.txt"), "corrigido a mao").unwrap();
+        std::fs::write(dir.join("song_data.json"), "{\"corrigido\":1}").unwrap();
+        assert!(finished_package_exists(out, "A".into(), "B".into()));
+        backup_finished_package(&dir, "A - B").unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("A - B.txt.bak")).unwrap(), "corrigido a mao");
+        assert_eq!(std::fs::read_to_string(dir.join("song_data.json.bak")).unwrap(), "{\"corrigido\":1}");
+        // a limpeza de auxiliares não pode levar as cópias embora
+        clean_song_extras(dir.to_string_lossy().to_string()).unwrap();
+        assert!(dir.join("A - B.txt.bak").exists());
+        assert!(dir.join("song_data.json.bak").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+#[cfg(test)]
 mod clean_extras_tests {
     use super::{clean_song_extras, is_aux_package_file};
 
@@ -1720,6 +1820,7 @@ fn main() {
             update_ytdlp,
             save_approved_lyrics,
             load_approved_lyrics,
+            finished_package_exists,
             setup_environment
         ])
         .build(tauri::generate_context!())

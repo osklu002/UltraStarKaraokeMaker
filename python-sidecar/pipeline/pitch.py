@@ -85,6 +85,28 @@ def hz_to_ultrastar_pitch(hz: float) -> int:
     return round(midi_note - _MIDI_C4)
 
 
+def _read_window(audio_path: str, start_s: float, end_s: float) -> tuple[np.ndarray, int]:
+    """
+    Lê do disco SÓ o trecho [start_s, end_s) do arquivo, em vez do arquivo
+    inteiro. Os mesmos índices de amostra que o fatiamento antigo
+    (`y[int(start_s*sr):int(end_s*sr)]`) usava, então o trecho sai idêntico.
+
+    Por quê: extract_word_track roda UMA VEZ POR PALAVRA (150-400 por música),
+    e antes cada chamada relia o stem de vocal inteiro (~40 MB num WAV de 4
+    min) só para usar meio segundo dele. MEDIDO (24/09/2026): 300 leituras do
+    arquivo inteiro = 29 s; 300 leituras só do trecho = 0,05 s. Era tempo
+    perdido em toda geração, sem mudar nada no resultado.
+    """
+    with sf.SoundFile(audio_path) as f:
+        sr = f.samplerate
+        start_sample = max(0, int(start_s * sr))
+        end_sample = min(f.frames, int(end_s * sr))
+        if end_sample <= start_sample:
+            return np.zeros((0,) if f.channels == 1 else (0, f.channels)), sr
+        f.seek(start_sample)
+        return f.read(end_sample - start_sample), sr
+
+
 class PitchExtractor:
     def __init__(
         self,
@@ -115,10 +137,7 @@ class PitchExtractor:
         reais de cada sílaba e onde há sustentação (melisma), em vez de só
         dividir a duração da palavra igualmente entre as sílabas.
         """
-        y, sr = sf.read(audio_path)
-        start_sample = int(start_s * sr)
-        end_sample = int(end_s * sr)
-        segment = y[start_sample:end_sample]
+        segment, sr = _read_window(audio_path, start_s, end_s)
 
         if segment.size == 0:
             empty = np.array([])

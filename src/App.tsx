@@ -1077,6 +1077,33 @@ function App() {
     }
   }
 
+  // Músicas desta leva que JÁ TÊM pacote pronto na pasta de saída: gerar de
+  // novo sobrescreve o .txt, inclusive as correções feitas à mão na tela de
+  // revisão - e isso acontecia sem aviso (achado na revisão do projeto,
+  // 24/09/2026). Pergunta UMA vez pela leva inteira. O Rust ainda guarda uma
+  // cópia .bak antes de sobrescrever (backup_finished_package), pra quem
+  // confirmar sem ler.
+  async function confirmOverwrite(items: QueueItem[]): Promise<boolean> {
+    const existing: string[] = [];
+    for (const it of items) {
+      try {
+        const yes = await invoke<boolean>("finished_package_exists", {
+          outDir: String(it.input.outDir ?? ""),
+          artist: it.artist,
+          title: it.title,
+        });
+        if (yes) existing.push(`• ${it.artist} - ${it.title}`);
+      } catch {
+        /* checagem é só um aviso - o .bak do Rust continua protegendo */
+      }
+    }
+    if (existing.length === 0) return true;
+    return await ask(t("overwriteConfirm", { songs: existing.join("\n") }), {
+      title: "USKMaker",
+      type: "warning",
+    });
+  }
+
   async function handleGenerate() {
     if (isRunning) return;
     const formErr = validate();
@@ -1112,6 +1139,9 @@ function App() {
       setError(formErr);
       return;
     }
+    // Pergunta ANTES de mexer na fila e no formulário: "não" deixa tudo como
+    // estava, com os campos ainda preenchidos.
+    if (!(await confirmOverwrite(current ? [...pending, current] : pending))) return;
     setError(null);
 
     const full = current ? [...queue, current] : queue;
@@ -1135,6 +1165,7 @@ function App() {
       input: lastGen.input,
       status: "pending",
     };
+    if (!(await confirmOverwrite([item]))) return;
     setQueue((q) => [...q, item]);
     await processQueue([item]);
   }

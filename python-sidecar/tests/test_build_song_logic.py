@@ -20,6 +20,7 @@ from pipeline.build_song import (
     apply_golden_notes,
     build_notes,
     detect_melisma_notes,
+    fix_rounding_overlaps,
     snap_octave_outliers,
 )
 from pipeline.pitch import PitchResult, PitchTrack
@@ -303,6 +304,42 @@ def test_octave_leaves_sustained_high_region():
         n.pitch = p
     snap_octave_outliers(notes)
     assert _pitches(notes) == original
+
+
+# --------------------------------------------------------------------------
+# fix_rounding_overlaps
+# --------------------------------------------------------------------------
+
+def _beats(spec):
+    return [Note(start_beat=s, duration_beats=d, pitch=0, text="la", note_type=":") for s, d in spec]
+
+
+def _spans(notes):
+    return [(n.start_beat, n.duration_beats) for n in notes]
+
+
+def test_overlap_de_arredondamento_encolhe_a_anterior():
+    notes = _beats([(0, 5), (4, 5), (8, 3), (10, 4)])
+    fix_rounding_overlaps(notes)
+    assert _spans(notes) == [(0, 4), (4, 4), (8, 2), (10, 4)]
+
+
+def test_notas_de_1_beat_no_mesmo_beat_sao_empurradas_em_fila():
+    # o caso do HISTÓRICO DE BUG 1: sem margem pra encolher, empurra a próxima
+    notes = _beats([(10, 1), (10, 1), (10, 1), (20, 2)])
+    fix_rounding_overlaps(notes)
+    assert _spans(notes) == [(10, 1), (11, 1), (12, 1), (20, 2)]
+
+
+def test_um_tempo_errado_nao_arrasta_o_resto_da_musica():
+    # HISTÓRICO DE BUG 2: uma nota 400 beats atrasada arrastava as 3 seguintes
+    # pra depois dela (esmagadas em 1 beat) e o validador não via mais nada.
+    spec = [(0, 8), (10, 8), (20, 8), (420, 8), (30, 8), (40, 8), (50, 8)]
+    notes = _beats(spec)
+    fix_rounding_overlaps(notes)
+    assert _spans(notes) == spec, "nenhuma nota deveria ter sido mexida"
+    # e o problema continua VISÍVEL pro validador (nota 3 x nota 4)
+    assert notes[4].start_beat < notes[3].start_beat + notes[3].duration_beats
 
 
 
