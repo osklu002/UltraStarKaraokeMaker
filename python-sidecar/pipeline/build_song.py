@@ -49,8 +49,37 @@ def fix_rounding_overlaps(notes: list[Note]) -> list[Note]:
     zerar o overlap, o restante ("residual") empurra o INÍCIO da próxima
     nota pra frente, garantindo que o overlap sempre seja eliminado por
     completo, não só "quando há margem para isso".
+
+    HISTÓRICO DE BUG 2 (24/09/2026, revisão do projeto): o empurrão acima não
+    tinha limite. Se UMA nota vinha com o tempo errado lá do alinhamento (ex.:
+    400 beats atrasada, na frente de notas que na verdade vêm antes dela), o
+    empurrão arrastava TODAS as notas seguintes pra depois dela e esmagava
+    cada uma pra 1 beat - e depois disso o validador de overlaps não achava
+    mais nada pra avisar. Um erro local virava um trecho inteiro estragado,
+    e em silêncio. MEDIDO rodando o código real: 1 tempo errado arrastou 4 de
+    7 notas.
+
+    Correção: o arredondamento NUNCA inverte a ordem (round() é monotônico e
+    as palavras chegam em ordem), então só o arredondamento produz notas que
+    começam no mesmo beat ou se sobrepõem - nunca uma nota que começa ANTES
+    da anterior. Quando os inícios ORIGINAIS estão invertidos, isso é um
+    tempo errado vindo de antes, não arredondamento: o par fica intocado,
+    um aviso vai pro log, e o validador da tela de revisão aponta o problema
+    na hora de salvar. Os casos de arredondamento continuam exatamente como
+    antes (inclusive o empurrão em cadeia de notas de 1 beat no mesmo lugar).
     """
+    # Inícios ORIGINAIS, antes de qualquer empurrão desta função: é com eles
+    # que se reconhece uma inversão de verdade (ver o docstring).
+    original_starts = [n.start_beat for n in notes]
+    out_of_order: list[int] = []
+
     for i in range(len(notes) - 1):
+        if original_starts[i + 1] < original_starts[i]:
+            # Inversão: não é arredondamento, é um tempo errado lá atrás.
+            # Não mexe em nenhuma das duas notas - deixa pro validador.
+            out_of_order.append(i)
+            continue
+
         current_end = notes[i].start_beat + notes[i].duration_beats
         next_start = notes[i + 1].start_beat
         if next_start < current_end:
@@ -66,6 +95,19 @@ def fix_rounding_overlaps(notes: list[Note]) -> list[Note]:
             residual = overlap - shrink
             if residual > 0:
                 notes[i + 1].start_beat += residual
+
+    if out_of_order:
+        pares = ", ".join(f"{i}/{i + 1}" for i in out_of_order)
+        # O log do pipeline é todo em português, mas o usuário do fork lê em
+        # inglês - por isso as duas linhas.
+        print(
+            f"[AVISO] {len(out_of_order)} nota(s) fora de ordem no tempo (notas {pares}): "
+            "um tempo de palavra veio errado do alinhamento. Deixadas como estão para a "
+            "tela de revisão mostrar - confira e corrija antes de usar a música.\n"
+            f"[WARNING] {len(out_of_order)} note(s) out of time order (notes {pares}): "
+            "a word timing came out wrong from alignment. Left as they are so the review "
+            "screen shows them - check and fix them before using the song."
+        )
 
     return notes
 

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.21.3] — 2026-09-25 (contribution by [@DJ-Joel](https://github.com/DJ-Joel))
+
+### Fixed
+
+- **Generating a song again silently overwrote a finished, hand-corrected package.** The package folder is named after the artist and title, so a second generation of the same song lands in the same folder and rewrites its `.txt` - including every correction made in the review screen - with no question asked and no copy kept. Found in a review of the project. The app now asks first, once for the whole batch, naming the songs that are already finished. And as a net for a question answered without reading it, a generation into a finished folder first copies the `.txt` and `song_data.json` to `.bak`; if that copy cannot be made, nothing is generated and nothing is overwritten. `.bak` on purpose: the game only reads `.txt`, so the copy does not show up as a second song, and cleaning the helper files leaves it alone. It keeps one copy - the version from just before the latest generation.
+
+- **A failed Save in the review screen threw away every unsaved edit.** The screen had a single error state, and showing it replaced the whole editor with an error box whose only button was "Back" - right when the package fails to load, wrong when a SAVE fails, because the edits that were just refused are exactly what disappears. Checked by making a save fail on purpose: before, the editor was gone; now the error appears above an untouched editor, says nothing was lost, and Save can simply be pressed again. The same applies to rebuilding the video.
+
+- **The pitch step re-read the whole vocal track once for every word.** Each word needs about half a second of audio, and each one opened and decoded the entire stem - around 40 MB for a four-minute song, 150 to 400 times per generation. It now reads only the word's own slice. Measured: 300 whole-file reads took 29 s, 300 slice reads 0.05 s; on real swift-f0 over 152 words, 7.4 s became 0.7 s, with byte-for-byte identical pitch data on every word. On the user's own "Cuts You Up" (351 words) the whole step took 22 s. Nothing in the output changes; it is time given back on every song.
+
+- **One wrong word timing could drag the rest of a section out of place, and then hide it.** The step that tidies the 1-beat overlaps rounding creates had no limit: when a note arrived far out of order from alignment, it pushed every following note behind it and crushed each one to a single beat - and once everything was pushed into order, the overlap check on Save had nothing left to report. Run against the real code, one timestamp placed 400 beats late moved 4 of the 7 notes around it. Rounding can never put a note BEFORE the one ahead of it (it keeps the order), so that case is now recognised as an alignment error rather than a rounding one: both notes are left exactly where they are, the log says which ones, and the review screen's overlap check points at them when the song is saved. Every genuine rounding case behaves as before - checked against the old code on 20,000 random songs with identical results.
+
 ## [0.21.2] — 2026-09-21 (contribution by [@DJ-Joel](https://github.com/DJ-Joel))
 
 ### Fixed

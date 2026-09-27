@@ -6,6 +6,18 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+## [0.21.3] — 2026-09-25 (contribuição [@DJ-Joel](https://github.com/DJ-Joel))
+
+### Corrigido
+
+- **Gerar uma música de novo sobrescrevia sem aviso um pacote pronto e corrigido à mão.** A pasta do pacote leva o nome do artista e do título, então uma segunda geração da mesma música cai na mesma pasta e reescreve o `.txt` - com todas as correções feitas na tela de revisão - sem perguntar nada e sem guardar cópia. Achado numa revisão do projeto. O app agora pergunta antes, uma vez pela leva inteira, nomeando as músicas que já estão prontas. E, como rede para uma pergunta respondida sem ler, uma geração numa pasta pronta primeiro copia o `.txt` e o `song_data.json` para `.bak`; se a cópia não puder ser feita, nada é gerado e nada é sobrescrito. `.bak` de propósito: o jogo só lê `.txt`, então a cópia não aparece como música repetida, e a limpeza dos auxiliares não mexe nela. Guarda uma cópia só - a versão de logo antes da última geração.
+
+- **Uma falha ao Salvar na tela de revisão jogava fora todas as alterações não salvas.** A tela tinha um único estado de erro, e mostrá-lo trocava o editor inteiro por uma caixa de erro cujo único botão era "Voltar" - certo quando o pacote não carrega, errado quando o SALVAR falha, porque o que some são justamente as alterações que acabaram de ser recusadas. Conferido fazendo um salvamento falhar de propósito: antes o editor sumia; agora o erro aparece acima do editor intacto, diz que nada foi perdido, e basta apertar Salvar de novo. O mesmo vale para refazer o vídeo.
+
+- **A etapa de pitch relia a faixa de voz inteira uma vez para cada palavra.** Cada palavra precisa de cerca de meio segundo de áudio, e cada uma abria e decodificava o stem inteiro - uns 40 MB numa música de quatro minutos, de 150 a 400 vezes por geração. Agora lê só o trecho da palavra. Medido: 300 leituras do arquivo inteiro levaram 29 s, 300 leituras do trecho 0,05 s; com o swift-f0 de verdade sobre 152 palavras, 7,4 s viraram 0,7 s, com dados de pitch idênticos byte a byte em todas as palavras. No "Cuts You Up" do próprio usuário (351 palavras) a etapa inteira levou 22 s. Nada muda no resultado; é tempo devolvido em toda música.
+
+- **Um único tempo de palavra errado podia arrastar o resto de um trecho para fora do lugar, e depois escondê-lo.** A etapa que arruma as sobreposições de 1 beat criadas pelo arredondamento não tinha limite: quando uma nota chegava do alinhamento muito fora de ordem, ela empurrava todas as notas seguintes para depois dela e esmagava cada uma em um beat só - e, com tudo empurrado em ordem, a checagem de sobreposição ao Salvar não tinha mais nada para avisar. Rodando o código real, um tempo 400 beats atrasado mexeu em 4 das 7 notas em volta. O arredondamento nunca põe uma nota ANTES da anterior (ele mantém a ordem), então esse caso agora é reconhecido como erro do alinhamento e não de arredondamento: as duas notas ficam exatamente onde estão, o log diz quais são, e a checagem de sobreposição da tela de revisão aponta para elas ao salvar. Todo caso real de arredondamento se comporta como antes - conferido contra o código antigo em 20.000 músicas aleatórias, com resultados idênticos.
+
 ## [0.21.2] — 2026-09-21 (contribuição [@DJ-Joel](https://github.com/DJ-Joel))
 
 ### Corrigido
