@@ -44,7 +44,7 @@
 //      PyInstaller é frágil com whisperx/demucs. O venv real, criado na
 //      máquina do usuário com o build de torch certo pro hardware dele
 //      (CUDA ou CPU), é mais robusto e mais leve de distribuir.
-// Detalhe do Tauri v1: resources declarados com "../" são instalados sob
+// Detalhe do Tauri (v1 e v2): resources declarados com "../" são instalados sob
 // uma pasta "_up_" dentro do resource_dir - a resolução checa esse caminho.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -56,7 +56,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::{Manager, Window};
+use tauri::{Emitter, Manager, Window};
 use tokio::io::AsyncWriteExt;
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::watch;
@@ -314,10 +314,10 @@ fn resolve_sidecar(app: &tauri::AppHandle, lang: &str) -> Result<(PathBuf, PathB
 
     // 2) PRODUÇÃO: código nos resources do app + venv na pasta de dados.
     let resource_dir = app
-        .path_resolver()
+        .path()
         .resource_dir()
-        .ok_or_else(|| tr(lang, "res_dir").to_string())?;
-    // Tauri v1 instala resources declarados com "../" sob "_up_".
+        .map_err(|_| tr(lang, "res_dir").to_string())?;
+    // O Tauri instala resources declarados com "../" sob "_up_".
     let code_candidates = [
         resource_dir.join("_up_").join("python-sidecar"),
         resource_dir.join("python-sidecar"),
@@ -352,9 +352,9 @@ fn resolve_setup_script(app: &tauri::AppHandle, lang: &str) -> Result<PathBuf, S
         return Ok(dev);
     }
     let resource_dir = app
-        .path_resolver()
+        .path()
         .resource_dir()
-        .ok_or_else(|| tr(lang, "res_dir").to_string())?;
+        .map_err(|_| tr(lang, "res_dir").to_string())?;
     let candidates = [
         resource_dir.join("_up_").join("scripts").join(platform::setup_script_name()),
         resource_dir.join("scripts").join(platform::setup_script_name()),
@@ -1783,6 +1783,10 @@ fn open_folder(path: String, lang: String) -> Result<(), String> {
 
 fn main() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(PipelineState::default())
         .invoke_handler(tauri::generate_handler![
             run_pipeline,

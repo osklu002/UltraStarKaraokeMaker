@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/tauri";
-import { ask } from "@tauri-apps/api/dialog";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { PitchDetector } from "pitchy";
 import { useI18n } from "../i18n";
 import LyricTimingPanel from "./LyricTimingPanel";
@@ -1893,7 +1893,7 @@ export default function ReviewScreen({ outDir, onClose, onSendToForm }: Props) {
 
   async function handleClose() {
     if (dirty) {
-      const leave = await ask(t("revConfirmDiscard"), { title: "USKMaker", type: "warning" });
+      const leave = await ask(t("revConfirmDiscard"), { title: "USKMaker", kind: "warning" });
       if (!leave) return;
     }
     audioRef.current?.pause();
