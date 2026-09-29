@@ -4,6 +4,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { PitchDetector } from "pitchy";
 import { useI18n } from "../i18n";
 import LyricTimingPanel from "./LyricTimingPanel";
+import { BufferPlayer, ReviewAudio } from "./bufferPlayer";
 import {
   approvedSettledForRows,
   approvedTimesForRows,
@@ -25,8 +26,9 @@ import {
 //   zoom e playhead redesenham dezenas de vezes por segundo; passar isso
 //   pelo ciclo de render do React deixaria a interação visivelmente presa.
 //   O React cuida só do "chrome" (toolbar, inspetor, mensagens).
-// - O áudio toca num <audio> escondido (blob: URL dos bytes lidos pelo asset protocol do Tauri)
-//   (convertFileSrc) - sem cópia de arquivo, sem base64.
+// - O áudio é lido uma vez pelo asset protocol do Tauri (convertFileSrc),
+//   decodificado com Web Audio e tocado desse buffer (bufferPlayer.ts) - o
+//   relógio do <audio> no Linux erra 1-2 s. Sem cópia de arquivo, sem base64.
 // - A waveform é decodificada com Web Audio API uma única vez por arquivo
 //   e reduzida a "peaks" (máximo absoluto por bucket) - desenhar as
 //   amostras cruas a cada frame seria inviável.
@@ -293,7 +295,10 @@ export default function ReviewScreen({ outDir, onClose, onSendToForm }: Props) {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const minimapRef = useRef<HTMLCanvasElement | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Player atual: o BufferPlayer (Web Audio), ou um <audio> de reserva se a
+  // decodificação falhar - os dois atendem à mesma interface ReviewAudio.
+  const audioRef = useRef<ReviewAudio | null>(null);
+  const playerRef = useRef<BufferPlayer | null>(null);
   const [activeVerse, setActiveVerse] = useState(0);
   const activeVerseRef = useRef(0);
 
@@ -396,24 +401,32 @@ export default function ReviewScreen({ outDir, onClose, onSendToForm }: Props) {
   // ------------------------------------------------------- áudio + peaks
   const currentAudioFile = audioChoice === "vocals" && vocalsPath ? vocalsPath : audioPath;
 
+  // Player de Web Audio, um por tela (ver bufferPlayer.ts). Declarado ANTES
+  // do efeito de carga abaixo: os efeitos rodam na ordem em que aparecem.
+  useEffect(() => {
+    const player = new BufferPlayer(new AudioContext(), setPlaying);
+    playerRef.current = player;
+    audioRef.current = player;
+    return () => {
+      player.dispose();
+      playerRef.current = null;
+      if (audioRef.current === player) audioRef.current = null;
+    };
+  }, []);
+
   useEffect(() => {
     if (!currentAudioFile) return;
-    const audio = audioRef.current;
-    if (!audio) return;
-    const keepTime = audio.currentTime;
-    const restore = () => {
-      audio.currentTime = keepTime;
-    };
-    audio.addEventListener("loadedmetadata", restore, { once: true });
+    const player = playerRef.current;
+    if (!player) return;
 
-    // O arquivo é lido UMA vez pelo asset protocol e serve às duas coisas:
-    // o <audio> toca uma blob: URL desses bytes e a waveform é decodificada
-    // deles. Antes o <audio> recebia a URL do asset protocol direto - no
-    // Linux (WebKitGTK/GStreamer) o player não consegue fazer streaming de
-    // esquema customizado e a revisão ficava muda, enquanto o fetch() da
-    // waveform funcionava (achado real, 29/09/2026). Se o fetch falhar, cai
-    // para a URL direta de antes (Windows/WebView2 toca assim normalmente).
+    // O arquivo é lido UMA vez pelo asset protocol, decodificado uma vez, e o
+    // buffer serve à waveform E ao playback (BufferPlayer). Duas armadilhas do
+    // Linux (WebKitGTK/GStreamer), achadas em 29/09/2026: o <audio> não faz
+    // streaming de esquema customizado (a revisão ficava muda), e mesmo tocando
+    // de uma blob: URL o relógio dele erra 1-2 s - notas desenhadas fora do
+    // canto. Se a decodificação falhar, cai para um <audio> como antes.
     let cancelled = false;
+    let fallback: HTMLAudioElement | null = null;
     let objectUrl: string | null = null;
     (async () => {
       let buf: ArrayBuffer | null = null;
@@ -424,36 +437,53 @@ export default function ReviewScreen({ outDir, onClose, onSendToForm }: Props) {
         buf = null;
       }
       if (cancelled) return;
-      if (buf) {
-        // o Blob COPIA os bytes: o decodeAudioData abaixo pode "desligar" o buf
-        objectUrl = URL.createObjectURL(new Blob([buf], { type: audioMimeType(currentAudioFile) }));
-        audio.src = objectUrl;
-      } else {
-        audio.src = convertFileSrc(currentAudioFile);
-      }
-      audio.load();
 
-      // waveform (não bloqueia o playback)
-      if (!buf) {
-        peaksRef.current = null;
+      let decoded: AudioBuffer | null = null;
+      if (buf) {
+        try {
+          // cópia: o decodeAudioData "desliga" o buffer, e a reserva ainda o usa
+          decoded = await player.context.decodeAudioData(buf.slice(0));
+        } catch {
+          decoded = null;
+        }
+      }
+      if (cancelled) return;
+
+      if (decoded) {
+        player.setBuffer(decoded);
+        audioRef.current = player;
+        peaksRef.current = { peaks: computePeaks(decoded, 8000), duration: decoded.duration };
+        draw();
         return;
       }
-      try {
-        const ctx = new AudioContext();
-        const decoded = await ctx.decodeAudioData(buf);
-        ctx.close();
-        if (!cancelled) {
-          peaksRef.current = { peaks: computePeaks(decoded, 8000), duration: decoded.duration };
-          draw();
-        }
-      } catch {
-        // sem waveform não é fatal - a timeline de notas continua funcionando
-        if (!cancelled) peaksRef.current = null;
+
+      // reserva: <audio> (toca, com o relógio impreciso do Linux) e sem waveform
+      peaksRef.current = null;
+      const keepTime = audioRef.current?.currentTime ?? 0;
+      audioRef.current?.pause();
+      const el = new Audio();
+      el.onplay = () => setPlaying(true);
+      el.onpause = () => setPlaying(false);
+      if (buf) {
+        objectUrl = URL.createObjectURL(new Blob([buf], { type: audioMimeType(currentAudioFile) }));
+        el.src = objectUrl;
+      } else {
+        el.src = convertFileSrc(currentAudioFile);
       }
+      el.addEventListener("loadedmetadata", () => { el.currentTime = keepTime; }, { once: true });
+      el.load();
+      fallback = el;
+      audioRef.current = el;
+      draw();
     })();
     return () => {
       cancelled = true;
-      audio.removeEventListener("loadedmetadata", restore);
+      if (fallback) {
+        fallback.pause();
+        fallback.removeAttribute("src");
+        fallback.load();
+        if (audioRef.current === fallback) audioRef.current = playerRef.current;
+      }
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2348,12 +2378,6 @@ export default function ReviewScreen({ outDir, onClose, onSendToForm }: Props) {
         />
       )}
 
-      <audio
-        ref={audioRef}
-        style={{ display: "none" }}
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-      />
     </div>
   );
 }
