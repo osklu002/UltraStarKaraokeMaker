@@ -98,7 +98,7 @@ const CANCELLED_MSG: &str = "__CANCELADO__";
 
 /// Traduz as mensagens de erro que chegam à interface. O Rust não passa pelo
 /// i18n do frontend (i18n.tsx), então os templates PT/EN moram aqui. Os
-/// placeholders `{path}`/`{err}`/`{venv}`/`{log}` são preenchidos com
+/// placeholders `{path}`/`{err}`/`{venv}`/`{log}`/`{script}` são preenchidos com
 /// `.replace()` no ponto de uso. `lang` vem do frontend ("pt" ou "en").
 fn tr(lang: &str, key: &str) -> &'static str {
     let en = lang == "en";
@@ -106,7 +106,7 @@ fn tr(lang: &str, key: &str) -> &'static str {
         "res_dir" => if en { "Could not locate the app's resources folder." } else { "Não foi possível localizar a pasta de resources do app." },
         "code_missing" => if en { "Sidecar code not found in the app resources (reinstall USKMaker)." } else { "Código do sidecar não encontrado nos resources do app (reinstale o USKMaker)." },
         "localappdata" => if en { "Couldn't locate the user data folder (LOCALAPPDATA on Windows, HOME on Linux is not set)." } else { "Não foi possível localizar a pasta de dados do usuário (LOCALAPPDATA no Windows, HOME no Linux não está definida)." },
-        "env_not_setup" => if en { "The AI environment isn't set up yet.\n\nRun the 'setup-sidecar.ps1' script (in the USKMaker install folder) once to install the dependencies. Expected at: {venv}" } else { "O ambiente de IA ainda não foi configurado.\n\nExecute o script 'setup-sidecar.ps1' (na pasta de instalação do USKMaker) uma única vez para instalar as dependências. Esperado em: {venv}" },
+        "env_not_setup" => if en { "The AI environment isn't set up yet.\n\nRun the '{script}' script (in the USKMaker install folder) once to install the dependencies. Expected at: {venv}" } else { "O ambiente de IA ainda não foi configurado.\n\nExecute o script '{script}' (na pasta de instalação do USKMaker) uma única vez para instalar as dependências. Esperado em: {venv}" },
         "server_start" => if en { "Error starting the persistent sidecar: {err}" } else { "Erro ao iniciar o sidecar persistente: {err}" },
         "server_stdin" => if en { "Couldn't get the sidecar's stdin." } else { "Não consegui obter a stdin do sidecar." },
         "server_send" => if en { "Error sending the job to the sidecar: {err}" } else { "Erro ao enviar job ao sidecar: {err}" },
@@ -335,13 +335,15 @@ fn resolve_sidecar(app: &tauri::AppHandle, lang: &str) -> Result<(PathBuf, PathB
     );
 
     if !venv_python.exists() {
-        return Err(tr(lang, "env_not_setup").replace("{venv}", &venv_python.display().to_string()));
+        return Err(tr(lang, "env_not_setup")
+            .replace("{script}", platform::setup_script_name())
+            .replace("{venv}", &venv_python.display().to_string()));
     }
 
     Ok((code_dir, venv_python))
 }
 
-/// Localiza o script de setup (setup-sidecar.ps1), tanto em dev quanto no app
+/// Localiza o script de setup (setup-sidecar.ps1 / .sh), tanto em dev quanto no app
 /// instalado (resources do Tauri, sob `_up_/scripts`).
 fn resolve_setup_script(app: &tauri::AppHandle, lang: &str) -> Result<PathBuf, String> {
     let dev = Path::new(env!("CARGO_MANIFEST_DIR"))

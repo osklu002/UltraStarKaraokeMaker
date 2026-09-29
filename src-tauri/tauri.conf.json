@@ -34,7 +34,8 @@
       "../python-sidecar/verify_setup.py",
       "../python-sidecar/requirements.txt",
       "../python-sidecar/pipeline/*.py",
-      "../scripts/setup-sidecar.ps1"
+      "../scripts/setup-sidecar.ps1",
+      "../scripts/setup-sidecar.sh"
     ]
   },
   "productName": "USKMaker",
