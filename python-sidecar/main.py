@@ -33,6 +33,7 @@ HISTÓRICO DE DECISÕES E BUGS (resumo - detalhes nos módulos de cada etapa):
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 import traceback
@@ -208,6 +209,7 @@ def resolve_whisper_device(device: str) -> str:
     """
     if device != "cuda":
         return "cpu"
+    _prefer_safe_ct2_allocator_on_hip()
     try:
         import ctranslate2
         if ctranslate2.get_cuda_device_count() > 0:
@@ -215,6 +217,28 @@ def resolve_whisper_device(device: str) -> str:
     except Exception:
         pass
     return "cpu"
+
+
+def _prefer_safe_ct2_allocator_on_hip() -> None:
+    """
+    Com build ROCm do CTranslate2 (GPU AMD), usa o alocador "cub_caching".
+
+    O alocador padrão dele na GPU usa hipMallocAsync, que em placas AMD de
+    consumo CORROMPE buffers em silêncio: o Whisper roda, mas perde de 30% a
+    95% do texto e cada execução do mesmo áudio sai diferente (às vezes com
+    "Memory access fault"). Relatado em CTranslate2 #2090 (RDNA2 e RDNA3.5) e
+    #2012; medido aqui numa RX 7800 XT (RDNA3, 29/09/2026): WER 15-95% e
+    falhas com o padrão, 11-13% estável com cub_caching (CPU: 10%), 13 s em
+    vez de 60-80 s na CPU. Só vale com torch ROCm (HIP); NVIDIA não muda, e
+    quem definiu CT2_CUDA_ALLOCATOR por conta própria é respeitado. Precisa
+    rodar ANTES do primeiro modelo carregado na GPU.
+    """
+    try:
+        import torch
+        if getattr(torch.version, "hip", None):
+            os.environ.setdefault("CT2_CUDA_ALLOCATOR", "cub_caching")
+    except Exception:
+        pass
 
 
 # Modelo do Whisper usado no alinhamento.
