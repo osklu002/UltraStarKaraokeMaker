@@ -61,3 +61,6 @@ Thumbs.db
 # Marcador local que liga o vídeo de karaokê sem a UI (ver server.py).
 # É por-instalação, nunca versionado.
 MP4-ON.txt
+
+# Tauri v2: schemas gerados no build (capabilities)
+src-tauri/gen/schemas/

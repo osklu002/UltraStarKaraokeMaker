@@ -1,0 +1,20 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissões da janela principal: só o que o frontend usa (o resto do trabalho é feito por comandos Rust).",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-set-title",
+    "dialog:allow-open",
+    "dialog:allow-ask",
+    "clipboard-manager:allow-write-text",
+    "notification:default",
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "https://lrclib.net/api/*" }]
+    }
+  ]
+}
