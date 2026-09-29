@@ -6,6 +6,20 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+## [0.22.0] - 2026-09-29 (contribuição [@osklu002](https://github.com/osklu002))
+
+### Adicionado
+- **Suporte a Linux & Tauri v2**: Migração para a versão 2 do Tauri e adição de camada de plataforma Linux (abertura de pastas, paths). Novo script `setup-sidecar.sh` gerencia o ambiente virtual no Linux.
+- **Suporte a Placas de Vídeo AMD (ROCm)**: A inicialização detecta GPUs AMD, define Whisper Medium como padrão para esse hardware e utiliza caches CTranslate2 apropriados.
+- **Internacionalização (i18n) do Sidecar**: Os logs da pipeline de inteligência artificial agora são traduzidos acompanhando o idioma escolhido no frontend da interface gráfica.
+
+### Corrigido
+- **Sincronia de Tempo no Alinhamento**: Agora o desvio de tempo permite compensação em até 15 segundos no aquivo `.lrc`, desde que confirmado diretamente pela faixa vocal.
+- **Problema do Excesso de Notas Freestyle (swift-f0)**: O cálculo de confiança de tom foi reajustado para `0.55` após as mudanças internas da v0.2 do `swift-f0`, evitando que a maior parte da música se torne cantos não pontuados.
+- **Anomalias de Oitava no Pitch**: Notas pontuais que se distanciavam mais de 18 semitons da melodia agora são inteligentemente *dobradas* para o registro local correto, mantendo a afinação sem quebrar visualmente o pacote.
+- **Relógio de Áudio da Revisão**: O áudio na revisão agora utiliza a Web Audio API, solucionando eventuais dessincronias do relógio padrão no navegador interno do app.
+- **Portabilidade dos Testes**: Diversos testes que dependiam do FFmpeg para Windows agora foram reescritos sem `C:\`, impedindo a quebra do CI no Mac/Linux.
+
 ## [0.21.3] — 2026-09-25 (contribuição [@DJ-Joel](https://github.com/DJ-Joel))
 
 ### Corrigido
