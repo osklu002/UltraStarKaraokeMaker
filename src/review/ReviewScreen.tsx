@@ -25,7 +25,7 @@ import {
 //   zoom e playhead redesenham dezenas de vezes por segundo; passar isso
 //   pelo ciclo de render do React deixaria a interação visivelmente presa.
 //   O React cuida só do "chrome" (toolbar, inspetor, mensagens).
-// - O áudio toca num <audio> escondido via asset protocol do Tauri
+// - O áudio toca num <audio> escondido (blob: URL dos bytes lidos pelo asset protocol do Tauri)
 //   (convertFileSrc) - sem cópia de arquivo, sem base64.
 // - A waveform é decodificada com Web Audio API uma única vez por arquivo
 //   e reduzida a "peaks" (máximo absoluto por bucket) - desenhar as
@@ -243,6 +243,13 @@ type DragMode =
   // Retângulo de seleção (Shift+arraste no fundo do piano roll).
   | { kind: "rubberband"; startX: number; startY: number; curX: number; curY: number };
 
+/** MIME do áudio do pacote, para a blob: URL do player (ogg/mp3/wav/m4a). */
+function audioMimeType(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const types: Record<string, string> = { ogg: "audio/ogg", mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", flac: "audio/flac" };
+  return types[ext] ?? "audio/mpeg";
+}
+
 export default function ReviewScreen({ outDir, onClose, onSendToForm }: Props) {
   const { t, lang } = useI18n();
   const [song, setSong] = useState<USSong | null>(null);
@@ -394,19 +401,44 @@ export default function ReviewScreen({ outDir, onClose, onSendToForm }: Props) {
     const audio = audioRef.current;
     if (!audio) return;
     const keepTime = audio.currentTime;
-    audio.src = convertFileSrc(currentAudioFile);
-    audio.load();
     const restore = () => {
       audio.currentTime = keepTime;
     };
     audio.addEventListener("loadedmetadata", restore, { once: true });
 
-    // decodifica a waveform em paralelo (não bloqueia o playback)
+    // O arquivo é lido UMA vez pelo asset protocol e serve às duas coisas:
+    // o <audio> toca uma blob: URL desses bytes e a waveform é decodificada
+    // deles. Antes o <audio> recebia a URL do asset protocol direto - no
+    // Linux (WebKitGTK/GStreamer) o player não consegue fazer streaming de
+    // esquema customizado e a revisão ficava muda, enquanto o fetch() da
+    // waveform funcionava (achado real, 29/09/2026). Se o fetch falhar, cai
+    // para a URL direta de antes (Windows/WebView2 toca assim normalmente).
     let cancelled = false;
+    let objectUrl: string | null = null;
     (async () => {
+      let buf: ArrayBuffer | null = null;
       try {
         const resp = await fetch(convertFileSrc(currentAudioFile));
-        const buf = await resp.arrayBuffer();
+        if (resp.ok) buf = await resp.arrayBuffer();
+      } catch {
+        buf = null;
+      }
+      if (cancelled) return;
+      if (buf) {
+        // o Blob COPIA os bytes: o decodeAudioData abaixo pode "desligar" o buf
+        objectUrl = URL.createObjectURL(new Blob([buf], { type: audioMimeType(currentAudioFile) }));
+        audio.src = objectUrl;
+      } else {
+        audio.src = convertFileSrc(currentAudioFile);
+      }
+      audio.load();
+
+      // waveform (não bloqueia o playback)
+      if (!buf) {
+        peaksRef.current = null;
+        return;
+      }
+      try {
         const ctx = new AudioContext();
         const decoded = await ctx.decodeAudioData(buf);
         ctx.close();
@@ -422,6 +454,7 @@ export default function ReviewScreen({ outDir, onClose, onSendToForm }: Props) {
     return () => {
       cancelled = true;
       audio.removeEventListener("loadedmetadata", restore);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAudioFile]);
