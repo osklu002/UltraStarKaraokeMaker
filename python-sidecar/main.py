@@ -33,6 +33,7 @@ HISTÓRICO DE DECISÕES E BUGS (resumo - detalhes nos módulos de cada etapa):
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 import traceback
@@ -193,6 +194,53 @@ def resolve_device(requested: str) -> str:
     return "cpu"
 
 
+def resolve_whisper_device(device: str) -> str:
+    """
+    Device da TRANSCRIÇÃO (Whisper), que pode ser diferente do resto.
+
+    O Whisper do whisperx roda no faster-whisper, que usa o CTranslate2 - e não
+    o torch. Com GPU AMD (torch ROCm), `torch.cuda.is_available()` é True e o
+    resolve_device devolve "cuda" (Demucs e o alinhamento wav2vec2 rodam na GPU
+    via HIP), mas o CTranslate2 do PyPI só conhece CUDA de verdade: carregar o
+    Whisper com "cuda" quebraria. Quem decide é o próprio CTranslate2: se ele
+    enxerga GPU, usa; senão, a transcrição vai para a CPU e o resto continua na
+    GPU. NVIDIA: nada muda (o CTranslate2 vê a placa). Um build ROCm do
+    CTranslate2 também passa a ser usado sozinho, sem código específico de AMD.
+    """
+    if device != "cuda":
+        return "cpu"
+    _prefer_safe_ct2_allocator_on_hip()
+    try:
+        import ctranslate2
+        if ctranslate2.get_cuda_device_count() > 0:
+            return "cuda"
+    except Exception:
+        pass
+    return "cpu"
+
+
+def _prefer_safe_ct2_allocator_on_hip() -> None:
+    """
+    Com build ROCm do CTranslate2 (GPU AMD), usa o alocador "cub_caching".
+
+    O alocador padrão dele na GPU usa hipMallocAsync, que em placas AMD de
+    consumo CORROMPE buffers em silêncio: o Whisper roda, mas perde de 30% a
+    95% do texto e cada execução do mesmo áudio sai diferente (às vezes com
+    "Memory access fault"). Relatado em CTranslate2 #2090 (RDNA2 e RDNA3.5) e
+    #2012; medido aqui numa RX 7800 XT (RDNA3, 29/09/2026): WER 15-95% e
+    falhas com o padrão, 11-13% estável com cub_caching (CPU: 10%), 13 s em
+    vez de 60-80 s na CPU. Só vale com torch ROCm (HIP); NVIDIA não muda, e
+    quem definiu CT2_CUDA_ALLOCATOR por conta própria é respeitado. Precisa
+    rodar ANTES do primeiro modelo carregado na GPU.
+    """
+    try:
+        import torch
+        if getattr(torch.version, "hip", None):
+            os.environ.setdefault("CT2_CUDA_ALLOCATOR", "cub_caching")
+    except Exception:
+        pass
+
+
 # Modelo do Whisper usado no alinhamento.
 #
 # POR QUE ISTO VIROU UMA OPÇÃO (relato real, 02/09/2026 - "Camouflage - The
@@ -238,6 +286,20 @@ def resolve_whisper_model(requested: str, device: str) -> str:
         return WHISPER_MODEL_DEFAULT
     try:
         import torch
+        # GPU AMD (torch ROCm/HIP): "auto" fica no medium. MEDIDO (29/09/2026,
+        # RX 7800 XT, CTranslate2 ROCm + cub_caching), 3 músicas:
+        #   - Arvingarna "Eloise" (sueco), contra o chart do SingStar: large-v3
+        #     deixou 17 âncoras exatas e 54% das palavras a <=0,3 s; medium
+        #     deu 140 âncoras e 78% (notas casadas 58% -> 78%, contorno de
+        #     pitch 0,67 -> 0,87).
+        #   - Mauro Scocco "Till dom ensamma" (sueco): large-v3 alucinou um
+        #     crédito de legenda de TV ("textning stina hedin ...") e variou
+        #     entre execuções (WER 35-44%); medium 22%.
+        #   - Rick Astley (inglês): medium mais rápido e melhor (2,4% x 5,0%
+        #     de palavras interpoladas).
+        # NVIDIA continua na regra de VRAM abaixo (medida lá, noutro backend).
+        if getattr(getattr(torch, "version", None), "hip", None):
+            return WHISPER_MODEL_DEFAULT
         vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
         if vram_gb >= WHISPER_LARGE_MIN_VRAM_GB:
             return WHISPER_MODEL_BEST
@@ -554,11 +616,17 @@ def run_pipeline(
 
     console.rule(t("main.step4"))
     debug_log("ETAPA 4 - iniciando align_lyrics_to_audio")
-    whisper_model_size = resolve_whisper_model(whisper_model, device)
+    # Transcrição pode ir para a CPU mesmo com o resto na GPU (GPU AMD/ROCm:
+    # ver resolve_whisper_device). O tamanho do modelo segue o device REAL dela.
+    whisper_device = resolve_whisper_device(device)
+    if whisper_device != device:
+        debug_log(f"ETAPA 4 - Whisper na CPU (CTranslate2 sem GPU); alinhamento em {device}")
+        console.print(t("main.whisper_on_cpu"))
+    whisper_model_size = resolve_whisper_model(whisper_model, whisper_device)
     debug_log(f"ETAPA 4 - modelo Whisper: {whisper_model_size} (pedido: {whisper_model})")
     console.print(t("main.whisper_model", model=whisper_model_size))
     word_timings = align_lyrics_to_audio(
-        stems.vocals, Path(lyrics_path), language=language, device=device,
+        stems.vocals, Path(lyrics_path), language=language, device=device, whisper_device=whisper_device,
         whisper_model_size=whisper_model_size,
         synced_lyrics_path=Path(synced_lyrics_path) if synced_lyrics_path else None,
     )
@@ -589,7 +657,7 @@ def run_pipeline(
         try:
             lead_vocals = isolate_lead_vocal(stems.vocals, work_path / "lead_vocal")
             retry_timings = align_lyrics_to_audio(
-                lead_vocals, Path(lyrics_path), language=language, device=device,
+                lead_vocals, Path(lyrics_path), language=language, device=device, whisper_device=whisper_device,
                 whisper_model_size=whisper_model_size,
                 synced_lyrics_path=Path(synced_lyrics_path) if synced_lyrics_path else None,
             )
@@ -634,7 +702,7 @@ def run_pipeline(
         debug_log(f"ETAPA 4d - resgate VAD sensivel: interp_frac={interp_frac:.2f}")
         try:
             vad_retry_timings = align_lyrics_to_audio(
-                stems.vocals, Path(lyrics_path), language=language, device=device,
+                stems.vocals, Path(lyrics_path), language=language, device=device, whisper_device=whisper_device,
                 whisper_model_size=whisper_model_size,
                 synced_lyrics_path=Path(synced_lyrics_path) if synced_lyrics_path else None,
                 vad_options={"vad_onset": 0.3, "vad_offset": 0.2},
@@ -683,7 +751,7 @@ def run_pipeline(
         try:
             stems2 = separate_vocals(source.audio_wav, work_path / "stems_retry", device=device)
             retry_timings = align_lyrics_to_audio(
-                stems2.vocals, Path(lyrics_path), language=language, device=device,
+                stems2.vocals, Path(lyrics_path), language=language, device=device, whisper_device=whisper_device,
                 whisper_model_size=whisper_model_size,
                 synced_lyrics_path=Path(synced_lyrics_path) if synced_lyrics_path else None,
             )
@@ -1058,7 +1126,7 @@ if __name__ == "__main__":
     parser.add_argument("--keep-harmonies", action="store_true", help="Mantém as vozes de apoio/harmonias no áudio do pacote (só a voz principal é removida). Custa uma separação a mais.")
     parser.add_argument("--whisper-model", default="auto",
                         choices=["auto", "medium", "large-v3", "large-v2", "small"],
-                        help="Modelo de reconhecimento do alinhamento. auto = large-v3 em GPU com VRAM sobrando, senão medium")
+                        help="Modelo de reconhecimento do alinhamento. auto = large-v3 em GPU NVIDIA com VRAM sobrando, senão medium (GPU AMD: medium)")
     parser.add_argument("--mp4-export", action="store_true", help="Renderiza também um vídeo de karaokê '<base> (Karaoke).mp4' (letra sincronizada gravada por cima do fundo)")
     parser.add_argument("--romanize", action="store_true", help="Reescreve o texto das notas em romaji (Hepburn) via pykakasi - para letras japonesas")
     parser.add_argument(
