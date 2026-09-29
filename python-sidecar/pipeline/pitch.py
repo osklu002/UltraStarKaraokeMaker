@@ -34,9 +34,33 @@ primeira:
 Conferido antes de migrar, com as duas versões instaladas lado a lado e o
 mesmo áudio: num sinal parecido com voz (série harmônica com vibrato), a
 0.2.0 concorda com a 0.1.2 em 124 dos 125 quadros no threshold de 0.85, com
-diferença mediana de 1,3 Hz no F0. O threshold de 0.85 abaixo continua
-valendo. (Num seno PURO as duas divergem muito - a 0.2.0 tem bem menos
-confiança num tom artificial - mas isso não é canto e não aparece aqui.)
+diferença mediana de 1,3 Hz no F0. (Num seno PURO as duas divergem muito - a
+0.2.0 tem bem menos confiança num tom artificial.)
+
+CORREÇÃO (29/09/2026): em CANTO REAL a escala de confiança da 0.2.0 é bem
+mais baixa que a da 0.1.2 - o sinal sintético acima não mostrava isso, e
+manter 0.85 fazia ~60% das notas saírem freestyle ("F", não pontua). Medido
+nos stems de vocal do Demucs de 4 músicas (pop masculino, pop feminino, rock,
+MPB), as duas versões lado a lado no MESMO áudio:
+
+    música          quadros   mediana conf 0.1.2 / 0.2.0   F0 igual (mediana)
+    Rick Astley       13315        0.87 / 0.60               9,7 cents
+    (as outras três com o mesmo padrão; F0 difere < 11 cents em todas)
+
+    Quadros vozeados da 0.1.2@0.85 que a 0.2.0 recupera (recall), e F1:
+    threshold 0.2.0    0.40   0.50   0.55   0.60   0.70   0.85
+    F1 médio (4)       0.82   0.82   0.82   0.81   0.78   0.68
+    recall (pior)      0.90   0.82   0.78   0.72   0.57   0.32
+
+O F1 fica num platô entre ~0.40 e ~0.55 e cai depois; 0.55 é o ponto do platô
+com mais concordância de F0 com a 0.1.2. Em Rick Astley (alinhamento fixo,
+só o threshold mudando): notas freestyle 59,8% -> 21,2%, tempo cantado que
+pontua 62 s -> 108 s, sem perder concordância de pitch com um detector
+independente (UltraSinger/swift-f0 0.1.2: 65% -> 63% mesma classe de nota).
+Só o threshold mudou de escala: o F0 é praticamente o mesmo.
+
+OBS: a 0.2.0 também passou a devolver `timestamps` no INÍCIO do quadro (a
+0.1.2 devolvia o centro) - 8 ms de diferença, irrelevante para o UltraStar.
 
 NOTA para canto: fmin/fmax padrão (46.875-2093.75 Hz, G1 a C7) já cobre bem
 a faixa vocal humana em canto. Se detectar oitava errada com frequência,
@@ -110,11 +134,12 @@ def _read_window(audio_path: str, start_s: float, end_s: float) -> tuple[np.ndar
 class PitchExtractor:
     def __init__(
         self,
-        confidence_threshold: float = 0.85,
-        # 0.85 em vez do padrão 0.9 da lib: canto tende a puxar a confiança
-        # um pouco pra baixo em notas com vibrato/vogal esticada (mesmo
-        # padrão que já observamos no alinhamento fonético do whisperx -
-        # ver nota em align.py). Ajustar se estiver descartando notas boas.
+        confidence_threshold: float = 0.55,
+        # Calibrado para a escala da swift-f0 0.2.x (ver CORREÇÃO no topo do
+        # arquivo): reproduz o que 0.85 fazia na 0.1.x. Não voltar para 0.85 -
+        # na 0.2 isso descarta a maior parte dos quadros bons de canto. Fica
+        # acima do corte de 0.5 do build_song.py (confiança média -> ":"/"F"),
+        # então uma nota só vira "F" quando não tem NENHUM quadro vozeado.
         fmin: float = 46.875,
         fmax: float = 2093.75,
     ):

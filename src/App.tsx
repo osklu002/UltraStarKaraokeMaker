@@ -1,15 +1,32 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/tauri";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { open as openDialog, ask } from "@tauri-apps/api/dialog";
-import { writeText } from "@tauri-apps/api/clipboard";
-import { fetch as httpFetch, ResponseType } from "@tauri-apps/api/http";
-import { appWindow, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
-import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/api/notification";
+import { open as openDialog, ask } from "@tauri-apps/plugin-dialog";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { fetch as httpFetch } from "@tauri-apps/plugin-http";
+import { getCurrentWindow, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { getVersion } from "@tauri-apps/api/app";
 import ReviewScreen from "./review/ReviewScreen";
 import { useI18n, StrKey } from "./i18n";
 import { isApprovedLrc } from "./review/lrcTiming";
+const appWindow = getCurrentWindow();
+
+// GET JSON no LRCLIB pelo plugin http do Tauri (sem CORS). O plugin da v2 segue
+// a API `fetch` padrão; este helper devolve o mesmo formato {ok,status,data}
+// do `http.fetch` da v1, para a lógica de escolha de registro não mudar.
+async function lrclibGet<T>(
+  path: "get" | "search",
+  query: Record<string, string>
+): Promise<{ ok: boolean; status: number; data: T }> {
+  const resp = await httpFetch(`https://lrclib.net/api/${path}?${new URLSearchParams(query)}`, {
+    method: "GET",
+    // o LRCLIB pede que clientes se identifiquem
+    headers: { "Lrclib-Client": "USKMaker/0.1.0 (https://github.com/walterfr/UltraStarKaraokeMaker)" },
+    signal: AbortSignal.timeout(20_000),
+  });
+  return { ok: resp.ok, status: resp.status, data: resp.ok ? ((await resp.json()) as T) : (undefined as T) };
+}
 
 // USKMaker - tela principal.
 //
@@ -51,6 +68,7 @@ interface EnvCheck {
   ffmpegOk: boolean;
   vorbisOk: boolean;
   gpuName: string | null;
+  gpuVendor: "nvidia" | "amd" | null;
 }
 
 type QueueStatus = "pending" | "running" | "done" | "error" | "cancelled";
@@ -546,7 +564,10 @@ function App() {
     const unlistenPromise = listen<string>("pipeline-log", (event) => {
       const line = event.payload;
       setLogs((prev) => [...prev, line]);
-      const match = line.match(/Etapa\s+(\d+)\/(\d+)/);
+      // A régua de etapa do sidecar sai no idioma da interface ("Etapa 3/6"
+      // ou "Step 3/6" - ver python-sidecar/pipeline/i18n.py). Aceita as duas:
+      // o idioma pode ter sido trocado com um job já em andamento.
+      const match = line.match(/(?:Etapa|Step)\s+(\d+)\/(\d+)/);
       if (match) {
         setCurrentStep(parseInt(match[1], 10));
       }
@@ -711,13 +732,9 @@ function App() {
         // normalmente para o LRCLIB.
       }
 
-      const resp = await httpFetch<LrclibTrack>("https://lrclib.net/api/get", {
-        method: "GET",
-        timeout: 20,
-        responseType: ResponseType.JSON,
-        query: { artist_name: artist.trim(), track_name: title.trim() },
-        // o LRCLIB pede que clientes se identifiquem
-        headers: { "Lrclib-Client": "USKMaker/0.1.0 (https://github.com/walterfr/UltraStarKaraokeMaker)" },
+      const resp = await lrclibGet<LrclibTrack>("get", {
+        artist_name: artist.trim(),
+        track_name: title.trim(),
       });
       if (!resp.ok) {
         if (resp.status === 404) {
@@ -773,12 +790,9 @@ function App() {
       // de uma gravação com outra duração.
       if (!synced) {
         try {
-          const alt = await httpFetch<LrclibTrack[]>("https://lrclib.net/api/search", {
-            method: "GET",
-            timeout: 20,
-            responseType: ResponseType.JSON,
-            query: { artist_name: artist.trim(), track_name: title.trim() },
-            headers: { "Lrclib-Client": "USKMaker/0.1.0 (https://github.com/walterfr/UltraStarKaraokeMaker)" },
+          const alt = await lrclibGet<LrclibTrack[]>("search", {
+            artist_name: artist.trim(),
+            track_name: title.trim(),
           });
           if (alt.ok && Array.isArray(alt.data)) {
             const wantedArtist = artist.trim().toLowerCase();
@@ -1100,7 +1114,7 @@ function App() {
     if (existing.length === 0) return true;
     return await ask(t("overwriteConfirm", { songs: existing.join("\n") }), {
       title: "USKMaker",
-      type: "warning",
+      kind: "warning",
     });
   }
 
@@ -1403,7 +1417,7 @@ function App() {
                 {!env.gpuName
                   ? t("envNoGpu")
                   : cudaOk === false
-                    ? t("envGpuNoCuda", { name: env.gpuName })
+                    ? t(env.gpuVendor === "amd" ? "envGpuNoRocm" : "envGpuNoCuda", { name: env.gpuName })
                     : t("envGpu", { name: env.gpuName })}
               </span>
             </div>

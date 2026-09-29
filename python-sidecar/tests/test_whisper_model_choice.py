@@ -64,6 +64,28 @@ def test_gpu_pequena_fica_no_medium(monkeypatch):
     assert resolve_whisper_model("auto", "cuda") == WHISPER_MODEL_DEFAULT
 
 
+def test_gpu_amd_rocm_fica_no_medium_mesmo_com_vram_sobrando(monkeypatch):
+    """
+    torch ROCm (HIP): medido em 3 músicas numa RX 7800 XT, o large-v3 foi pior
+    que o medium (ver resolve_whisper_model) - o automático fica no medium.
+    """
+    _fake_torch(monkeypatch, 16)
+    sys.modules["torch"].version = types.SimpleNamespace(hip="7.1.25424", cuda=None)
+    assert resolve_whisper_model("auto", "cuda") == WHISPER_MODEL_DEFAULT
+
+
+def test_gpu_nvidia_com_versao_do_torch_segue_a_regra_da_vram(monkeypatch):
+    _fake_torch(monkeypatch, 16)
+    sys.modules["torch"].version = types.SimpleNamespace(hip=None, cuda="12.8")
+    assert resolve_whisper_model("auto", "cuda") == WHISPER_MODEL_BEST
+
+
+def test_amd_com_escolha_explicita_de_large_recebe_large(monkeypatch):
+    _fake_torch(monkeypatch, 16)
+    sys.modules["torch"].version = types.SimpleNamespace(hip="7.1.25424", cuda=None)
+    assert resolve_whisper_model("large-v3", "cuda") == "large-v3"
+
+
 def test_cpu_nunca_usa_o_modelo_grande(monkeypatch):
     """large-v3 na CPU levaria dezenas de minutos - na prática, travar."""
     _fake_torch(monkeypatch, 64)          # VRAM irrelevante: o device é cpu

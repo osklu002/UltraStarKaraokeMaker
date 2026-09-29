@@ -17,7 +17,10 @@ export default defineConfig({
       // instante em que o cargo estava escrevendo/travando o arquivo
       // durante a compilação (erro real, 06/07/2026). Ignorar a pasta
       // resolve na raiz e ainda deixa o hot-reload do frontend intacto.
-      ignored: ["**/src-tauri/**"],
+      // Também os worktrees de agentes do Claude Code (.claude/worktrees):
+      // cópias completas do repositório dentro da pasta do projeto - editar
+      // arquivos neles recarregava o app em uso (29/09/2026).
+      ignored: ["**/src-tauri/**", "**/.claude/**"],
     },
   },
   envPrefix: ["VITE_", "TAURI_"],

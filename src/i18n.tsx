@@ -28,9 +28,10 @@ const STRINGS = {
 
     // ---- ambiente ----
     envAI: "Ambiente de IA",
-    envNoGpu: "⚠ sem GPU NVIDIA — processamento em CPU (lento)",
+    envNoGpu: "⚠ sem GPU compatível (NVIDIA/AMD) — processamento em CPU (lento)",
     envGpu: "✓ GPU {name}",
     envGpuNoCuda: "⚠ GPU {name} — torch sem CUDA, rodando em CPU (lento)",
+    envGpuNoRocm: "⚠ GPU {name} — torch sem ROCm, rodando em CPU (lento)",
     envIncomplete: "Ambiente incompleto — a geração vai falhar até resolver:",
     envNoFfmpeg: "ffmpeg não encontrado no PATH — instale (https://www.gyan.dev/ffmpeg/builds/) e reinicie o app.",
     envNoVorbis: "O ffmpeg instalado não tem suporte a libvorbis (necessário para o áudio .ogg do pacote) — use um build \"full\".",
@@ -349,9 +350,10 @@ const STRINGS = {
     infoButtonTitle: "About USKMaker",
 
     envAI: "AI environment",
-    envNoGpu: "⚠ no NVIDIA GPU — CPU processing (slow)",
+    envNoGpu: "⚠ no supported GPU (NVIDIA/AMD) — CPU processing (slow)",
     envGpu: "✓ GPU {name}",
     envGpuNoCuda: "⚠ GPU {name} — torch without CUDA, running on CPU (slow)",
+    envGpuNoRocm: "⚠ GPU {name} — torch without ROCm, running on CPU (slow)",
     envIncomplete: "Incomplete environment — generation will fail until fixed:",
     envNoFfmpeg: "ffmpeg not found on PATH — install it (https://www.gyan.dev/ffmpeg/builds/) and restart the app.",
     setupButton: "Set up AI environment",

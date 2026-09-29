@@ -36,6 +36,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field, asdict
 
+from .i18n import t
+
 
 @dataclass
 class Note:
@@ -188,15 +190,14 @@ class Song:
             current_end = self.notes[i].start_beat + self.notes[i].duration_beats
             next_start = self.notes[i + 1].start_beat
             if next_start < current_end:
-                warnings.append(
-                    f"Sobreposição entre nota {i} (fim={current_end}) e nota {i+1} (início={next_start})"
-                )
+                warnings.append(t("writer.overlap", i=i, end=current_end,
+                                  j=i + 1, start=next_start))
         return warnings
 
     def write(self, path: str) -> None:
         warnings = self.validate_no_overlap()
         if warnings:
-            print("[ATENÇÃO] Overlaps detectados antes de salvar:")
+            print(t("writer.overlaps_header"))
             for w in warnings:
                 print("  -", w)
 

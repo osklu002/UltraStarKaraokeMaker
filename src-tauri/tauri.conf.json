@@ -2,74 +2,66 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "devPath": "http://localhost:1423",
-    "distDir": "../dist"
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1423"
   },
-  "package": {
-    "productName": "USKMaker",
-    "version": "0.21.3"
-  },
-  "tauri": {
-    "allowlist": {
-      "all": true,
-      "protocol": {
-        "asset": true,
-        "assetScope": [
-          "**"
-        ]
-      },
-      "http": {
-        "all": true,
-        "request": true,
-        "scope": [
-          "https://lrclib.net/api/*"
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "languages": [
+          "PortugueseBR",
+          "English"
         ]
       }
     },
-    "bundle": {
-      "active": true,
-      "targets": [
-        "nsis"
-      ],
-      "identifier": "br.com.walterfr.uskmaker",
-      "icon": [
-        "icons/32x32.png",
-        "icons/128x128.png",
-        "icons/icon.ico"
-      ],
-      "resources": [
-        "../python-sidecar/main.py",
-        "../python-sidecar/server.py",
-        "../python-sidecar/read_tags.py",
-        "../python-sidecar/update_ytdlp.py",
-        "../python-sidecar/read_video_info.py",
-        "../python-sidecar/fetch_assets.py",
-        "../python-sidecar/verify_setup.py",
-        "../python-sidecar/requirements.txt",
-        "../python-sidecar/pipeline/*.py",
-        "../scripts/setup-sidecar.ps1"
-      ],
-      "windows": {
-        "nsis": {
-          "installMode": "perMachine",
-          "languages": [
-            "PortugueseBR",
-            "English"
-          ]
-        }
-      }
-    },
-    "security": {
-      "csp": null
-    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "../python-sidecar/main.py",
+      "../python-sidecar/server.py",
+      "../python-sidecar/read_tags.py",
+      "../python-sidecar/update_ytdlp.py",
+      "../python-sidecar/read_video_info.py",
+      "../python-sidecar/fetch_assets.py",
+      "../python-sidecar/verify_setup.py",
+      "../python-sidecar/requirements.txt",
+      "../python-sidecar/pipeline/*.py",
+      "../scripts/setup-sidecar.ps1",
+      "../scripts/setup-sidecar.sh"
+    ]
+  },
+  "productName": "USKMaker",
+  "mainBinaryName": "USKMaker",
+  "version": "0.21.3",
+  "identifier": "br.com.walterfr.uskmaker",
+  "plugins": {},
+  "app": {
     "windows": [
       {
         "title": "USKMaker",
         "width": 960,
         "height": 900,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "useHttpsScheme": true
       }
-    ]
+    ],
+    "security": {
+      "assetProtocol": {
+        "scope": [
+          "**"
+        ],
+        "enable": true
+      },
+      "csp": null
+    }
   }
 }

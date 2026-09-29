@@ -44,7 +44,7 @@
 //      PyInstaller é frágil com whisperx/demucs. O venv real, criado na
 //      máquina do usuário com o build de torch certo pro hardware dele
 //      (CUDA ou CPU), é mais robusto e mais leve de distribuir.
-// Detalhe do Tauri v1: resources declarados com "../" são instalados sob
+// Detalhe do Tauri (v1 e v2): resources declarados com "../" são instalados sob
 // uma pasta "_up_" dentro do resource_dir - a resolução checa esse caminho.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -56,17 +56,17 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::{Manager, Window};
+use tauri::{Emitter, Manager, Window};
 use tokio::io::AsyncWriteExt;
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::watch;
 use tokio::time::{sleep, Duration};
 use uskmaker_core::Song;
 
-/// Flag do Windows para criar subprocessos sem janela de console piscando
-/// (CREATE_NO_WINDOW) - relevante porque o app roda como GUI.
+mod platform;
+
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+use platform::CREATE_NO_WINDOW;
 
 /// Trait que expõe `.creation_flags()` no `std::process::Command` (o do
 /// tokio já traz o método embutido).
@@ -98,15 +98,15 @@ const CANCELLED_MSG: &str = "__CANCELADO__";
 
 /// Traduz as mensagens de erro que chegam à interface. O Rust não passa pelo
 /// i18n do frontend (i18n.tsx), então os templates PT/EN moram aqui. Os
-/// placeholders `{path}`/`{err}`/`{venv}`/`{log}` são preenchidos com
+/// placeholders `{path}`/`{err}`/`{venv}`/`{log}`/`{script}` são preenchidos com
 /// `.replace()` no ponto de uso. `lang` vem do frontend ("pt" ou "en").
 fn tr(lang: &str, key: &str) -> &'static str {
     let en = lang == "en";
     match key {
         "res_dir" => if en { "Could not locate the app's resources folder." } else { "Não foi possível localizar a pasta de resources do app." },
         "code_missing" => if en { "Sidecar code not found in the app resources (reinstall USKMaker)." } else { "Código do sidecar não encontrado nos resources do app (reinstale o USKMaker)." },
-        "localappdata" => if en { "LOCALAPPDATA variable is not set." } else { "Variável LOCALAPPDATA não definida." },
-        "env_not_setup" => if en { "The AI environment isn't set up yet.\n\nRun the 'setup-sidecar.ps1' script (in the USKMaker install folder) once to install the dependencies. Expected at: {venv}" } else { "O ambiente de IA ainda não foi configurado.\n\nExecute o script 'setup-sidecar.ps1' (na pasta de instalação do USKMaker) uma única vez para instalar as dependências. Esperado em: {venv}" },
+        "localappdata" => if en { "Couldn't locate the user data folder (LOCALAPPDATA on Windows, HOME on Linux is not set)." } else { "Não foi possível localizar a pasta de dados do usuário (LOCALAPPDATA no Windows, HOME no Linux não está definida)." },
+        "env_not_setup" => if en { "The AI environment isn't set up yet.\n\nRun the '{script}' script (in the USKMaker install folder) once to install the dependencies. Expected at: {venv}" } else { "O ambiente de IA ainda não foi configurado.\n\nExecute o script '{script}' (na pasta de instalação do USKMaker) uma única vez para instalar as dependências. Esperado em: {venv}" },
         "server_start" => if en { "Error starting the persistent sidecar: {err}" } else { "Erro ao iniciar o sidecar persistente: {err}" },
         "server_stdin" => if en { "Couldn't get the sidecar's stdin." } else { "Não consegui obter a stdin do sidecar." },
         "server_send" => if en { "Error sending the job to the sidecar: {err}" } else { "Erro ao enviar job ao sidecar: {err}" },
@@ -290,35 +290,34 @@ struct PipelineResult {
     notes_whisper_anchored: usize,
 }
 
-/// Caminho do ffmpeg EMBUTIDO do USKMaker (`%LOCALAPPDATA%\USKMaker\bin\ffmpeg.exe`),
-/// obtido pelo setup. `None` = não existe → o pipeline cai para o ffmpeg do
-/// PATH (compatível com instalações antigas). Passado ao sidecar via env
-/// `USKMAKER_FFMPEG`, removendo a exigência de ffmpeg no PATH do sistema.
+/// Caminho do ffmpeg EMBUTIDO do USKMaker (`<pasta de dados>/bin/ffmpeg[.exe]`,
+/// ver platform::data_dir), obtido pelo setup. `None` = não existe → o
+/// pipeline cai para o ffmpeg do PATH (compatível com instalações antigas e o
+/// caminho normal no Linux, onde o ffmpeg vem da distro). Passado ao sidecar
+/// via env `USKMAKER_FFMPEG`, removendo a exigência de ffmpeg no PATH do sistema.
 fn resolve_ffmpeg() -> Option<PathBuf> {
-    let local_app_data = std::env::var("LOCALAPPDATA").ok()?;
-    let p = Path::new(&local_app_data)
-        .join("USKMaker")
+    let p = platform::data_dir()?
         .join("bin")
-        .join("ffmpeg.exe");
+        .join(platform::exe_name("ffmpeg"));
     p.exists().then_some(p)
 }
 
 /// Resolução em cascata do sidecar (ver nota DISTRIBUIÇÃO no topo).
-/// Retorna (pasta do código python, caminho do python.exe do venv).
+/// Retorna (pasta do código python, caminho do python do venv).
 fn resolve_sidecar(app: &tauri::AppHandle, lang: &str) -> Result<(PathBuf, PathBuf), String> {
     // 1) DEV: pasta irmã do repositório, com venv local (fluxo clássico).
     let dev_code = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("python-sidecar");
-    let dev_python = dev_code.join("venv").join("Scripts").join("python.exe");
+    let dev_python = platform::venv_python(&dev_code.join("venv"));
     if dev_python.exists() {
         return Ok((dev_code, dev_python));
     }
 
-    // 2) PRODUÇÃO: código nos resources do app + venv no LOCALAPPDATA.
+    // 2) PRODUÇÃO: código nos resources do app + venv na pasta de dados.
     let resource_dir = app
-        .path_resolver()
+        .path()
         .resource_dir()
-        .ok_or_else(|| tr(lang, "res_dir").to_string())?;
-    // Tauri v1 instala resources declarados com "../" sob "_up_".
+        .map_err(|_| tr(lang, "res_dir").to_string())?;
+    // O Tauri instala resources declarados com "../" sob "_up_".
     let code_candidates = [
         resource_dir.join("_up_").join("python-sidecar"),
         resource_dir.join("python-sidecar"),
@@ -329,38 +328,38 @@ fn resolve_sidecar(app: &tauri::AppHandle, lang: &str) -> Result<(PathBuf, PathB
         .cloned()
         .ok_or_else(|| tr(lang, "code_missing").to_string())?;
 
-    let local_app_data = std::env::var("LOCALAPPDATA")
-        .map_err(|_| tr(lang, "localappdata").to_string())?;
-    let venv_python = Path::new(&local_app_data)
-        .join("USKMaker")
-        .join("venv")
-        .join("Scripts")
-        .join("python.exe");
+    let venv_python = platform::venv_python(
+        &platform::data_dir()
+            .ok_or_else(|| tr(lang, "localappdata").to_string())?
+            .join("venv"),
+    );
 
     if !venv_python.exists() {
-        return Err(tr(lang, "env_not_setup").replace("{venv}", &venv_python.display().to_string()));
+        return Err(tr(lang, "env_not_setup")
+            .replace("{script}", platform::setup_script_name())
+            .replace("{venv}", &venv_python.display().to_string()));
     }
 
     Ok((code_dir, venv_python))
 }
 
-/// Localiza o script de setup (setup-sidecar.ps1), tanto em dev quanto no app
+/// Localiza o script de setup (setup-sidecar.ps1 / .sh), tanto em dev quanto no app
 /// instalado (resources do Tauri, sob `_up_/scripts`).
 fn resolve_setup_script(app: &tauri::AppHandle, lang: &str) -> Result<PathBuf, String> {
     let dev = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("scripts")
-        .join("setup-sidecar.ps1");
+        .join(platform::setup_script_name());
     if dev.exists() {
         return Ok(dev);
     }
     let resource_dir = app
-        .path_resolver()
+        .path()
         .resource_dir()
-        .ok_or_else(|| tr(lang, "res_dir").to_string())?;
+        .map_err(|_| tr(lang, "res_dir").to_string())?;
     let candidates = [
-        resource_dir.join("_up_").join("scripts").join("setup-sidecar.ps1"),
-        resource_dir.join("scripts").join("setup-sidecar.ps1"),
+        resource_dir.join("_up_").join("scripts").join(platform::setup_script_name()),
+        resource_dir.join("scripts").join(platform::setup_script_name()),
     ];
     candidates
         .iter()
@@ -463,7 +462,7 @@ async fn ensure_server_and_send(
         // stdout/stderr do servidor vão para um log de SESSÃO (só diagnóstico);
         // a saída de cada job é capturada pelo próprio Python no log do job.
         //
-        // Fica em %LOCALAPPDATA%\USKMaker, NÃO em code_dir: no instalador
+        // Fica na pasta de dados (%LOCALAPPDATA%\USKMaker), NÃO em code_dir: no instalador
         // perMachine, code_dir é a pasta de recursos dentro de Program Files,
         // só-leitura pra usuário comum. Achado num caso real (31/07/2026):
         // GPU antiga (GTX 750 Ti) fazia o sidecar morrer no import do
@@ -471,9 +470,9 @@ async fn ensure_server_and_send(
         // server.py); o log de sessão seria o único registro do crash, mas
         // como estava em Program Files, o File::create falhava e o erro
         // caía num Stdio::null() silencioso - usuário e nós sem log nenhum.
-        let session_log = std::env::var("LOCALAPPDATA")
-            .map(|p| Path::new(&p).join("USKMaker").join("_server_session.log"))
-            .unwrap_or_else(|_| code_dir.join("_server_session.log"));
+        let session_log = platform::data_dir()
+            .map(|d| d.join("_server_session.log"))
+            .unwrap_or_else(|| code_dir.join("_server_session.log"));
         if let Some(parent) = session_log.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -497,6 +496,8 @@ async fn ensure_server_and_send(
         if let Some(ff) = resolve_ffmpeg() {
             cmd.env("USKMAKER_FFMPEG", &ff);
         }
+        // grupo de processos próprio: o Cancelar mata os filhos junto (Unix)
+        platform::detach_process_group(&mut cmd);
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
         let mut child = cmd
@@ -669,6 +670,11 @@ async fn run_pipeline(
         "synced_lyrics_path": synced_path.as_ref().map(|p| p.to_string_lossy().to_string()),
         "audio_format": input.audio_format,
         "max_video_resolution": input.max_video_resolution,
+        // Idioma das mensagens do log da pipeline = idioma da interface
+        // (29/09/2026, ver python-sidecar/pipeline/i18n.py). Vai POR JOB porque
+        // o servidor é persistente e o usuário pode trocar o idioma no meio da
+        // fila. Não confundir com "language" (idioma cantado da música).
+        "ui_lang": lang,
     });
     let job_line = serde_json::to_string(&job)
         .map_err(|e| tr_err(lang, "job_serialize", &e))?;
@@ -792,7 +798,7 @@ async fn run_pipeline(
 }
 
 /// Cancela a geração em andamento: mata a ÁRVORE de processos do sidecar
-/// persistente (taskkill /T) - além do python.exe do servidor, derruba os
+/// persistente (platform::kill_tree_command) - além do python do servidor, derruba os
 /// filhos (Demucs/ffmpeg/yt-dlp) do job atual. O servidor morre junto, então
 /// limpamos o handle: o próximo job da fila respawna um servidor novo (frio).
 /// O run_pipeline percebe cancel_requested no laço de espera e devolve a
@@ -807,11 +813,8 @@ async fn cancel_pipeline(state: tauri::State<'_, PipelineState>, lang: String) -
     let Some(pid) = pid else {
         return Ok(()); // nada rodando - cancelamento vira no-op
     };
-    let mut kill = Command::new("taskkill");
-    kill.args(["/PID", &pid.to_string(), "/T", "/F"]);
-    #[cfg(windows)]
-    kill.creation_flags(CREATE_NO_WINDOW);
-    kill.output()
+    Command::from(platform::kill_tree_command(pid))
+        .output()
         .await
         .map_err(|e| tr_err(&lang, "cancel_fail", &e))?;
     Ok(())
@@ -830,8 +833,61 @@ struct EnvCheck {
     ffmpeg_ok: bool,
     /// libvorbis é necessário para gerar o .ogg do pacote
     vorbis_ok: bool,
-    /// nome da GPU NVIDIA, ou None = processamento em CPU (bem mais lento)
+    /// nome da GPU (NVIDIA, ou AMD no Linux), ou None = processamento em CPU (bem mais lento)
     gpu_name: Option<String>,
+    /// "nvidia" | "amd" - a interface usa para falar CUDA ou ROCm
+    gpu_vendor: Option<String>,
+}
+
+/// Nome de uma GPU AMD no Linux, para o status de ambiente.
+///
+/// O `nvidia-smi` só enxerga NVIDIA; com torch ROCm uma GPU AMD roda o Demucs
+/// e o alinhamento, mas o app mostrava "sem GPU NVIDIA". Procura no sysfs uma
+/// placa de vídeo com vendor 0x1002 (AMD) e pega o nome pelo `lspci`; sem
+/// lspci, fica um nome genérico. Só Linux: o torch ROCm não existe no Windows.
+#[cfg(target_os = "linux")]
+fn detect_amd_gpu() -> Option<String> {
+    let mut cards: Vec<_> = std::fs::read_dir("/sys/class/drm")
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            let n = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            // "card0", "card1"... (não os conectores "card1-DP-1")
+            n.starts_with("card") && n[4..].chars().all(|c| c.is_ascii_digit())
+        })
+        .collect();
+    cards.sort();
+    for card in cards {
+        let dev = card.join("device");
+        let vendor = std::fs::read_to_string(dev.join("vendor")).unwrap_or_default();
+        if vendor.trim() != "0x1002" {
+            continue;
+        }
+        let name = std::fs::read_link(&dev)
+            .ok()
+            .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
+            .and_then(|slot| std::process::Command::new("lspci").args(["-mm", "-s", &slot]).output().ok())
+            .and_then(|out| amd_name_from_lspci(&String::from_utf8_lossy(&out.stdout)));
+        return Some(name.unwrap_or_else(|| "AMD Radeon".to_string()));
+    }
+    None
+}
+
+/// `lspci -mm`: `2d:00.0 "VGA compatible controller" "Advanced Micro Devices,
+/// Inc. [AMD/ATI]" "Navi 32 [Radeon RX 7700 XT / 7800 XT]" ...` -> o nome
+/// comercial entre colchetes do 4º campo ("AMD Radeon RX 7700 XT / 7800 XT"),
+/// ou o campo inteiro se não houver colchetes.
+fn amd_name_from_lspci(line: &str) -> Option<String> {
+    let device = line.split('"').nth(5)?.trim();
+    if device.is_empty() {
+        return None;
+    }
+    let marketing = device
+        .rfind('[')
+        .and_then(|i| device[i + 1..].strip_suffix(']'))
+        .unwrap_or(device);
+    Some(format!("AMD {marketing}"))
 }
 
 /// Confere se as bibliotecas do pipeline estão REALMENTE instaladas no venv.
@@ -898,12 +954,21 @@ async fn check_environment(app: tauri::AppHandle, lang: String) -> Result<EnvChe
     gpu_cmd.args(["--query-gpu=name", "--format=csv,noheader"]);
     #[cfg(windows)]
     gpu_cmd.creation_flags(CREATE_NO_WINDOW);
-    let gpu_name = match gpu_cmd.output().await {
+    let nvidia_name = match gpu_cmd.output().await {
         Ok(out) if out.status.success() => {
             let name = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").trim().to_string();
             if name.is_empty() { None } else { Some(name) }
         }
         _ => None,
+    };
+    #[cfg(target_os = "linux")]
+    let amd_name = if nvidia_name.is_none() { detect_amd_gpu() } else { None };
+    #[cfg(not(target_os = "linux"))]
+    let amd_name: Option<String> = None;
+    let (gpu_name, gpu_vendor) = match (nvidia_name, amd_name) {
+        (Some(n), _) => (Some(n), Some("nvidia".to_string())),
+        (None, Some(a)) => (Some(a), Some("amd".to_string())),
+        (None, None) => (None, None),
     };
 
     Ok(EnvCheck {
@@ -912,6 +977,7 @@ async fn check_environment(app: tauri::AppHandle, lang: String) -> Result<EnvChe
         ffmpeg_ok,
         vorbis_ok,
         gpu_name,
+        gpu_vendor,
     })
 }
 
@@ -951,14 +1017,19 @@ async fn regenerate_video(app: tauri::AppHandle, out_dir: String, lang: String) 
     // o resto da pipeline é invocada, então importações relativas funcionam.
     cmd.arg("-m").arg("pipeline.video_export").arg("--dir").arg(&out_dir);
     cmd.current_dir(&code_dir);
+    // As mensagens de erro do video_export (a última linha do stderr vira o
+    // erro na tela, abaixo) já existem em pt/en e escolhem o idioma por
+    // USKMAKER_LANG - só faltava o app passar a escolha do usuário. Sem isto
+    // valia o locale da máquina, que pode não bater com a interface.
+    cmd.env("USKMAKER_LANG", &lang);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
     match cmd.output().await {
         Ok(out) if out.status.success() => {
             Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
         }
-        // O sidecar já devolve mensagem em português para os casos previstos
-        // (song_data.json ausente, áudio ausente, ffmpeg sem libass).
+        // O sidecar já devolve mensagem no idioma da interface para os casos
+        // previstos (song_data.json ausente, áudio ausente, ffmpeg sem libass).
         Ok(out) => {
             let err = String::from_utf8_lossy(&out.stderr);
             let last = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
@@ -968,8 +1039,8 @@ async fn regenerate_video(app: tauri::AppHandle, out_dir: String, lang: String) 
     }
 }
 
-/// Setup in-app do ambiente de IA: roda o setup-sidecar.ps1 em modo NÃO
-/// interativo (-Unattended) e transmite o progresso para a UI via evento
+/// Setup in-app do ambiente de IA: roda o script de setup da plataforma
+/// (setup-sidecar.ps1 / setup-sidecar.sh) em modo NÃO interativo e transmite o progresso para a UI via evento
 /// "setup-log". Substitui o passo manual de "clicar com o direito no .ps1"
 /// (que segue disponível como fallback). O script baixa o uv, cria o venv com
 /// Python 3.12, baixa o ffmpeg embutido e instala as dependências.
@@ -977,26 +1048,15 @@ async fn regenerate_video(app: tauri::AppHandle, out_dir: String, lang: String) 
 async fn setup_environment(app: tauri::AppHandle, window: Window, lang: String) -> Result<(), String> {
     let script = resolve_setup_script(&app, &lang)?;
 
-    let local_app_data =
-        std::env::var("LOCALAPPDATA").map_err(|_| tr(&lang, "localappdata").to_string())?;
-    let usk_dir = Path::new(&local_app_data).join("USKMaker");
+    let usk_dir = platform::data_dir().ok_or_else(|| tr(&lang, "localappdata").to_string())?;
     std::fs::create_dir_all(&usk_dir).map_err(|e| tr_err(&lang, "setup_spawn", &e))?;
     let log_path = usk_dir.join("setup.log");
     let _ = std::fs::remove_file(&log_path);
     let stdout_file = File::create(&log_path).map_err(|e| tr_err(&lang, "setup_spawn", &e))?;
     let stderr_file = stdout_file.try_clone().map_err(|e| tr_err(&lang, "setup_spawn", &e))?;
 
-    // `-Command` com `*>&1` faz TODA a saída do PowerShell (inclusive o
-    // Write-Host, que é o stream de Information) ir para o stdout capturado no
-    // arquivo tailado - senão as linhas coloridas de progresso se perderiam.
-    let ps_cmd = format!("& '{}' -Unattended *>&1", script.display());
-    let mut cmd = Command::new("powershell");
-    cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"])
-        .arg(&ps_cmd)
-        .stdout(stdout_file)
-        .stderr(stderr_file);
-    #[cfg(windows)]
-    cmd.creation_flags(CREATE_NO_WINDOW);
+    let mut cmd = platform::setup_command(&script);
+    cmd.stdout(stdout_file).stderr(stderr_file);
 
     let mut child = cmd.spawn().map_err(|e| tr_err(&lang, "setup_spawn", &e))?;
 
@@ -1042,12 +1102,10 @@ async fn setup_environment(app: tauri::AppHandle, window: Window, lang: String) 
 // sozinho - nada precisou mudar lá para o arquivo ser legível.
 // ---------------------------------------------------------------------------
 
-/// `%LOCALAPPDATA%\USKMaker\approved-lyrics` - um .lrc por música.
+/// `<pasta de dados>/approved-lyrics` - um .lrc por música.
 fn approved_lyrics_dir(lang: &str) -> Result<PathBuf, String> {
-    let local_app_data =
-        std::env::var("LOCALAPPDATA").map_err(|_| tr(lang, "localappdata").to_string())?;
-    Ok(Path::new(&local_app_data)
-        .join("USKMaker")
+    Ok(platform::data_dir()
+        .ok_or_else(|| tr(lang, "localappdata").to_string())?
         .join("approved-lyrics"))
 }
 
@@ -1791,17 +1849,41 @@ fn fetch_package_assets(
 
 #[tauri::command]
 fn open_folder(path: String, lang: String) -> Result<(), String> {
-    // Windows-only por enquanto (Fase 2 é dev no Windows) - abre o
-    // Explorer na pasta de saída informada.
-    std::process::Command::new("explorer")
-        .arg(path)
+    // Explorer no Windows, xdg-open no Linux (ver platform.rs).
+    platform::open_folder_command(&path)
         .spawn()
         .map_err(|e| tr_err(&lang, "open_folder", &e))?;
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::amd_name_from_lspci;
+
+    #[test]
+    fn nome_amd_vem_dos_colchetes_do_lspci() {
+        let line = r#"2d:00.0 "VGA compatible controller" "Advanced Micro Devices, Inc. [AMD/ATI]" "Navi 32 [Radeon RX 7700 XT / 7800 XT]" -rc8 -p00 "ASUSTeK Computer Inc." "Device 05fd""#;
+        assert_eq!(amd_name_from_lspci(line).as_deref(), Some("AMD Radeon RX 7700 XT / 7800 XT"));
+    }
+
+    #[test]
+    fn nome_amd_sem_colchetes_usa_o_campo_inteiro() {
+        let line = r#"06:00.0 "Display controller" "Advanced Micro Devices, Inc. [AMD/ATI]" "Raphael" -rc6"#;
+        assert_eq!(amd_name_from_lspci(line).as_deref(), Some("AMD Raphael"));
+    }
+
+    #[test]
+    fn saida_vazia_do_lspci_nao_inventa_nome() {
+        assert_eq!(amd_name_from_lspci(""), None);
+    }
+}
+
 fn main() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(PipelineState::default())
         .invoke_handler(tauri::generate_handler![
             run_pipeline,
@@ -1833,11 +1915,7 @@ fn main() {
             let state = app_handle.state::<PipelineState>();
             let pid = state.child_pid.lock().ok().and_then(|g| *g);
             if let Some(pid) = pid {
-                let mut kill = std::process::Command::new("taskkill");
-                kill.args(["/PID", &pid.to_string(), "/T", "/F"]);
-                #[cfg(windows)]
-                kill.creation_flags(CREATE_NO_WINDOW);
-                let _ = kill.output();
+                let _ = platform::kill_tree_command(pid).output();
             }
         }
     });

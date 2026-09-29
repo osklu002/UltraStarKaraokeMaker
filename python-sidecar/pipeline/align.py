@@ -80,6 +80,9 @@ from pathlib import Path
 
 import numpy as np
 
+# "_t" e não "t": neste módulo `t` é nome de variável local (tempo) em vários
+# laços - importar como `t` seria pedir para uma sombra silenciosa.
+from .i18n import t as _t
 from .numerals import expand_numeral
 
 # Fontes de timestamp, da mais confiável para a menos:
@@ -441,6 +444,142 @@ def lrc_duration_mismatch(
     if last > audio_duration + hard_margin:
         return True
     return (last / audio_duration) < min_coverage
+
+
+# Deslocamento CONSTANTE do .lrc (29/09/2026): letra do LRCLIB com os tempos
+# certos entre si, mas todos adiantados/atrasados pelo mesmo tanto - típico de
+# letra sincronizada numa edição com introdução um pouco diferente. A checagem
+# de duração (lrc_duration_mismatch) não pega (a diferença é de ~1 s) e a
+# demoção por linha também não (tolerância de 3 s). Caso real: "Mauro Scocco -
+# Till dom ensamma" (sueco, reconhecimento de 58%): o .lrc estava 1,3 s
+# ADIANTADO na música inteira; como o reconhecimento ficou abaixo do piso, os
+# inícios do .lrc passaram por cima das âncoras medidas e 22 das 50 linhas
+# saíram 1,3 s cedo - conferido contra o ataque real da voz no stem de vocal,
+# onde as âncoras do Whisper batiam na mosca (erro ~0,05 s).
+#
+# Estimativa: nas linhas cuja 1ª palavra tem âncora EXATA do Whisper, a
+# diferença âncora - início no .lrc. O deslocamento é o MAIOR AGRUPAMENTO
+# dessas diferenças (todas dentro de uma janela de 1 s), não a mediana geral:
+# refrão repetido faz o Whisper casar a linha com OUTRA repetição, e essas
+# diferenças caem espalhadas a ±2-27 s. Medido no caso real (41 linhas,
+# stems de duas separações diferentes): 26 linhas entre +1,1 e +1,6 s e 15
+# espalhadas - com "maioria concordando com a mediana" a decisão oscilava
+# entre 57% e 63% conforme a separação do Demucs; o agrupamento acha +1,2-1,3
+# s nas duas. Só corrige quando o sinal é inequívoco: agrupamento com linhas
+# suficientes, fração relevante do total e desvio grande demais para ser o
+# "toque adiantado" normal de quem sincroniza à mão. A letra boa de teste
+# ("Kansas - Dust in the Wind", +0,17 s, espalhada) não é mexida.
+LRC_OFFSET_MIN_LINES = 5
+LRC_OFFSET_AGREE_TOL_S = 0.5  # meia-largura da janela do agrupamento
+LRC_OFFSET_MIN_AGREE_FRAC = 0.4
+LRC_OFFSET_MIN_SHIFT_S = 0.4
+# Teto do deslocamento: o mesmo limite de duração que o app usa ao escolher a
+# letra no LRCLIB (MAX_DURATION_DIFF_S = 15 em App.tsx). Era 5 s, por
+# prudência; com a confirmação pelo áudio abaixo, o teto deixou de ser a rede
+# de segurança. Medido num benchmark de 20 músicas contra charts feitos à mão
+# (29/09/2026): letras sincronizadas noutra edição com introdução diferente
+# vieram -10,6 s (Lorde - Royals), +6,7 s (Lena Philipsson - Dansa i neon) e
+# -7,9 s (Ed Sheeran - Thinking Out Loud), constantes na música inteira - e
+# com reconhecimento baixo arrastaram o chart inteiro (12-21% das palavras a
+# <=0,3 s do chart humano).
+LRC_OFFSET_MAX_SHIFT_S = 15.0
+
+
+def estimate_lrc_offset(
+    anchors: list[Anchor | None],
+    lyric_lines: list[tuple[str, int]],
+    lrc_lines: list[tuple[float, str]],
+) -> float | None:
+    """
+    Deslocamento constante (s) a SOMAR aos tempos do .lrc para casar com o
+    áudio, ou None quando não há evidência clara de deslocamento. Usa só as
+    âncoras exatas ("anchor") da 1ª palavra de linhas casadas com o .lrc.
+    """
+    matched = match_lrc_to_lines([t for t, _ in lyric_lines], lrc_lines)
+    diffs = []
+    for line_idx, (_, start_word) in enumerate(lyric_lines):
+        t = matched.get(line_idx)
+        if t is None or start_word >= len(anchors):
+            continue
+        a = anchors[start_word]
+        if a is None or a[3] != SOURCE_ANCHOR:
+            continue
+        diffs.append(a[0] - t)
+    if len(diffs) < LRC_OFFSET_MIN_LINES:
+        return None
+    # maior agrupamento: janela deslizante de largura 2*TOL sobre as diferenças ordenadas
+    diffs.sort()
+    best_lo, best_hi, j = 0, 0, 0
+    for i in range(len(diffs)):
+        while diffs[i] - diffs[j] > 2 * LRC_OFFSET_AGREE_TOL_S:
+            j += 1
+        if i - j > best_hi - best_lo:
+            best_lo, best_hi = j, i
+    cluster = diffs[best_lo:best_hi + 1]
+    if len(cluster) < LRC_OFFSET_MIN_LINES or len(cluster) / len(diffs) < LRC_OFFSET_MIN_AGREE_FRAC:
+        return None
+    offset = float(np.median(cluster))
+    if not (LRC_OFFSET_MIN_SHIFT_S <= abs(offset) <= LRC_OFFSET_MAX_SHIFT_S):
+        return None
+    return offset
+
+
+# Confirmação pelo ÁUDIO (29/09/2026): as âncoras do Whisper nesta etapa ainda
+# não foram limpas, e em música repetitiva elas podem formar um agrupamento
+# falso. Caso real: "Herreys - Diggi-Loo Diggi-Ley" (sueco, 35% de
+# reconhecimento) deu um agrupamento em -1,09 s; o .lrc cru estava certo
+# (+0,10 s do chart feito à mão) e o deslocamento o deixou ~1 s errado. A
+# evidência independente do Whisper é o próprio vocal: início de linha de um
+# .lrc certo cai onde a voz VOLTA depois de uma pausa. Medido no stem de vocal
+# (inícios de linha a <=0,25 s de um ataque de voz):
+#   Till dom ensamma (deslocamento real +1,31 s): 2% sem deslocar, 26% deslocado
+#   Diggi-Loo Diggi-Ley (falso -1,09 s):          7% sem deslocar, 10% deslocado
+# Só aplica quando o deslocamento melhora isso com folga.
+LRC_OFFSET_ONSET_TOL_S = 0.25
+LRC_OFFSET_MIN_ONSET_GAIN = 0.10
+
+
+def vocal_onsets(audio: np.ndarray, sample_rate: int = 16000) -> np.ndarray:
+    """
+    Instantes (s) em que a voz começa depois de uma pausa: energia em quadros
+    de 10 ms, voz = acima de -35 dB do pico, sustentada por >= 80 ms e
+    precedida de >= 150 ms de silêncio. Feito para o stem de vocal.
+    """
+    hop = sample_rate // 100
+    n = len(audio) // hop
+    if n < 30:
+        return np.array([])
+    x = np.asarray(audio[: n * hop], dtype=np.float64)
+    energy = np.add.reduceat(x * x, np.arange(0, n * hop, hop)) / hop
+    db = 10 * np.log10(energy + 1e-12)
+    voiced = db > db.max() - 35
+    c = np.concatenate([[0], np.cumsum(voiced)])
+    frames = np.arange(15, n - 8)
+    sustained = (c[frames + 8] - c[frames]) == 8        # quadros f..f+7 com voz
+    after_pause = (c[frames] - c[frames - 15]) == 0     # quadros f-15..f-1 sem voz
+    return frames[sustained & after_pause] / 100.0
+
+
+def lrc_offset_confirmed_by_onsets(
+    onsets: np.ndarray,
+    lrc_lines: list[tuple[float, str]],
+    offset: float,
+) -> bool:
+    """O deslocamento põe claramente mais inícios de linha em ataques reais de voz?"""
+    if len(onsets) < 5 or not lrc_lines:
+        return False
+    starts = np.array([t for t, _ in lrc_lines])
+
+    def agreement(shift: float) -> float:
+        dist = np.abs(onsets[None, :] - (starts + shift)[:, None]).min(axis=1)
+        return float(np.mean(dist <= LRC_OFFSET_ONSET_TOL_S))
+
+    return agreement(offset) >= agreement(0.0) + LRC_OFFSET_MIN_ONSET_GAIN
+
+
+def shift_lrc_lines(lrc_lines: list[tuple[float, str]], offset: float) -> list[tuple[float, str]]:
+    """Desloca todos os inícios do .lrc por `offset` segundos (sem ficar negativo)."""
+    return [(max(0.0, t + offset), text) for t, text in lrc_lines]
 
 
 def demote_anchors_conflicting_with_lrc(
@@ -1170,6 +1309,7 @@ def align_lyrics_to_audio(
     realign_gaps: bool = True,
     synced_lyrics_path: Path | None = None,
     vad_options: dict | None = None,
+    whisper_device: str | None = None,
 ) -> list[WordTiming]:
     """
     Retorna uma lista de WordTiming na ordem da letra fornecida, usando a
@@ -1190,14 +1330,19 @@ def align_lyrics_to_audio(
     """
     import whisperx
 
+    # Transcrição e alinhamento podem ir para devices diferentes: o Whisper
+    # roda no CTranslate2, o alinhamento no torch (ver resolve_whisper_device
+    # em main.py - GPU AMD/ROCm). Sem `whisper_device`, os dois usam `device`.
+    whisper_device = whisper_device or device
+
     # float16 é ótimo na GPU (RTX 4060), mas o faster-whisper NÃO suporta
     # float16 na CPU - lá o correto é int8. (Na GPU, use "int8" se faltar VRAM.)
-    compute_type = "float16" if device == "cuda" else "int8"
+    compute_type = "float16" if whisper_device == "cuda" else "int8"
 
     # 1) Transcrição LIVRE (sem substituir nada) - queremos saber o que o
     #    Whisper de fato reconheceu no áudio, com timestamps de alta
     #    confiança para o que ele acertar.
-    whisper_model = _get_whisper_model(whisper_model_size, device, compute_type, language, vad_options)
+    whisper_model = _get_whisper_model(whisper_model_size, whisper_device, compute_type, language, vad_options)
     audio = whisperx.load_audio(str(vocals_wav))
     transcription = whisper_model.transcribe(audio, language=language)
 
@@ -1240,11 +1385,7 @@ def align_lyrics_to_audio(
         # desconfiança: ela foi conferida de ouvido NESTA gravação (ver
         # lrc_is_approved).
         if approved:
-            print(
-                "[INFO] Letra sincronizada APROVADA pelo usuário - os inícios de linha "
-                "conferidos de ouvido mandam sobre as âncoras do Whisper, e as checagens "
-                "de duração/reconhecimento não se aplicam."
-            )
+            print(_t("align.lrc_approved"))
             # Semeia PRIMEIRO (mesma ordem do modo de baixo reconhecimento):
             # os inícios aprovados entram como verdade e passam a limitar as
             # janelas do realinhamento; a demoção depois limpa as âncoras do
@@ -1252,19 +1393,25 @@ def align_lyrics_to_audio(
             seeded = seed_line_anchors(anchors, lyric_lines, lrc_lines,
                                        override_measured=True)
             if seeded:
-                print(f"[INFO] Letra aprovada: {seeded} inícios de linha semeados (prioritários).")
+                print(_t("align.approved_seeded", n=seeded))
             demoted = demote_anchors_conflicting_with_lrc(
                 anchors, lyric_lines, lrc_lines, audio_duration=audio_duration
             )
             if demoted:
-                print(f"[INFO] Letra aprovada: {demoted} âncoras implausíveis demovidas.")
+                print(_t("align.approved_demoted", n=demoted))
         elif lrc_duration_mismatch(lrc_lines, audio_duration):
-            print(
-                "[AVISO] Letra sincronizada (.lrc) ignorada: a duração implícita não bate "
-                "com a gravação baixada (provável versão diferente - ao vivo, remix, edição). "
-                "O alinhamento segue só com Whisper + forced alignment."
-            )
+            print(_t("align.lrc_mismatch"))
         else:
+            # .lrc com deslocamento constante (ver estimate_lrc_offset): corrige
+            # ANTES de qualquer uso - senão ele demove âncoras certas e, com
+            # reconhecimento baixo, ainda passa por cima delas nos inícios.
+            lrc_offset = estimate_lrc_offset(anchors, lyric_lines, lrc_lines)
+            if lrc_offset is not None:
+                if lrc_offset_confirmed_by_onsets(vocal_onsets(audio), lrc_lines, lrc_offset):
+                    lrc_lines = shift_lrc_lines(lrc_lines, lrc_offset)
+                    print(_t("align.lrc_offset", offset=lrc_offset))
+                else:
+                    print(_t("align.lrc_offset_rejected", offset=lrc_offset))
             # Quem manda nos inícios de linha depende de QUANTO o Whisper
             # entendeu. Com reconhecimento normal, a âncora medida é mais
             # precisa que o início de linha do .lrc e continua ganhando. Abaixo
@@ -1275,11 +1422,7 @@ def align_lyrics_to_audio(
             trust_lrc = recall < LRC_OVERRIDE_RECALL_FLOOR
 
             if trust_lrc:
-                print(
-                    f"[INFO] Reconhecimento baixo ({100*recall:.0f}%) e .lrc com duração "
-                    f"compatível - os inícios de linha da letra sincronizada passam a "
-                    f"ter prioridade sobre as âncoras do Whisper."
-                )
+                print(_t("align.lrc_trusted", recall=100 * recall))
                 # Semeia PRIMEIRO: os postes do .lrc entram como verdade, e só
                 # depois a demoção limpa as âncoras do Whisper que brigam com
                 # eles. Na ordem inversa, a demoção julgaria contra postes que
@@ -1287,18 +1430,18 @@ def align_lyrics_to_audio(
                 seeded = seed_line_anchors(anchors, lyric_lines, lrc_lines,
                                            override_measured=True)
                 if seeded:
-                    print(f"[INFO] Âncoras de linha do .lrc: {seeded} inícios de linha semeados (prioritários).")
+                    print(_t("align.lrc_seeded_priority", n=seeded))
                 demoted = demote_anchors_conflicting_with_lrc(anchors, lyric_lines, lrc_lines, audio_duration=audio_duration)
                 if demoted:
-                    print(f"[INFO] Âncoras de linha do .lrc: {demoted} âncoras implausíveis demovidas.")
+                    print(_t("align.lrc_demoted", n=demoted))
             else:
                 demoted = demote_anchors_conflicting_with_lrc(anchors, lyric_lines, lrc_lines, audio_duration=audio_duration)
                 if demoted:
-                    print(f"[INFO] Âncoras de linha do .lrc: {demoted} âncoras implausíveis demovidas.")
+                    print(_t("align.lrc_demoted", n=demoted))
 
                 seeded = seed_line_anchors(anchors, lyric_lines, lrc_lines)
                 if seeded:
-                    print(f"[INFO] Âncoras de linha do .lrc: {seeded} inícios de linha semeados.")
+                    print(_t("align.lrc_seeded", n=seeded))
 
     # o fim do áudio limita o encadeamento das palavras sem âncora - sem isso
     # a interpolação vaza pra depois da música (ver timings_from_anchors)
@@ -1313,7 +1456,7 @@ def align_lyrics_to_audio(
             word_timings, align_model, metadata, audio, device, language
         )
         if promoted:
-            print(f"[INFO] Realinhamento de janela: {promoted} palavras medidas no 2º passe.")
+            print(_t("align.realigned", n=promoted))
 
     for wt, is_end, singer in zip(word_timings, line_end_flags, singer_flags):
         wt.is_line_end = is_end

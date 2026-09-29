@@ -14,7 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from read_video_info import pick_artist_title, split_artist_title, strip_title_noise
-from update_ytdlp import build_upgrade_command, is_prerelease
+from update_ytdlp import build_upgrade_command, data_dir, is_prerelease
 
 
 # ---------------------------------------------------------------------------
@@ -247,3 +247,19 @@ def test_divisao_devolve_o_titulo_completo():
 def test_visualiser_britanico_tambem_e_ruido():
     """Caso real da biblioteca do usuário - a lista só tinha "visualizer"."""
     assert strip_title_noise("Freedom! 90 [Official Visualiser]") == "Freedom! 90"
+
+
+# --- pasta de dados (onde o setup põe o uv) - espelho do platform.rs ---
+
+def test_data_dir_windows_usa_localappdata():
+    d = data_dir({"LOCALAPPDATA": r"C:\Users\x\AppData\Local"}, windows=True)
+    assert d == Path(r"C:\Users\x\AppData\Local") / "USKMaker"
+    assert data_dir({}, windows=True) is None
+
+
+def test_data_dir_linux_prefere_xdg_e_cai_para_local_share():
+    assert data_dir({"XDG_DATA_HOME": "/data", "HOME": "/home/x"}, windows=False) == Path("/data/USKMaker")
+    # relativo não vale (especificação XDG) -> padrão ~/.local/share
+    assert data_dir({"XDG_DATA_HOME": "rel", "HOME": "/home/x"}, windows=False) == Path("/home/x/.local/share/USKMaker")
+    assert data_dir({"HOME": "/home/x"}, windows=False) == Path("/home/x/.local/share/USKMaker")
+    assert data_dir({}, windows=False) is None

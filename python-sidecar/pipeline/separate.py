@@ -31,6 +31,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .i18n import t
 from .proc_utils import run_subprocess
 
 # Modelo "karaoke" da comunidade UVR (MelBand Roformer, treinado
@@ -73,9 +74,9 @@ def separate_vocals(
     # Complementam o log em disco (pipeline_debug.log) que o main.py
     # escreve nas fronteiras de cada etapa - esses aqui dão granularidade
     # fina dentro da própria etapa 2.
-    print(f"[DIAG] Prestes a chamar subprocess: {cmd}", flush=True)
+    print(t("separate.diag_before", cmd=cmd), flush=True)
     run_subprocess(cmd)
-    print("[DIAG] subprocess do Demucs retornou com sucesso.", flush=True)
+    print(t("separate.diag_after"), flush=True)
 
     # Demucs organiza a saída como: <out_dir>/<model>/<nome_do_arquivo>/vocals.wav e no_vocals.wav
     song_name = input_wav.stem
@@ -85,10 +86,7 @@ def separate_vocals(
     instrumental = result_dir / "no_vocals.wav"
 
     if not vocals.exists() or not instrumental.exists():
-        raise RuntimeError(
-            f"Demucs rodou mas não encontrei os stems esperados em {result_dir}. "
-            "Confira a versão do demucs instalada (a estrutura de pastas pode variar)."
-        )
+        raise RuntimeError(t("separate.no_stems", path=result_dir))
 
     return Stems(vocals=vocals, instrumental=instrumental)
 
@@ -118,10 +116,7 @@ def isolate_lead_vocal(vocals_wav: Path, out_dir: Path, model: str = LEAD_VOCAL_
         lead_vocals = next((c for c in candidates if c.exists()), lead_vocals)
 
     if not lead_vocals.exists():
-        raise RuntimeError(
-            f"audio-separator rodou mas não encontrei a voz principal isolada em {out_dir} "
-            f"(saída reportada: {output_files})."
-        )
+        raise RuntimeError(t("separate.no_lead", path=out_dir, files=output_files))
 
     return lead_vocals
 
@@ -161,10 +156,8 @@ def isolate_backing_vocals(vocals_wav: Path, out_dir: Path, model: str = LEAD_VO
             if wanted in path.name.lower():
                 return path
 
-    raise RuntimeError(
-        f"audio-separator rodou mas não achei o stem de vozes de apoio em {out_dir} "
-        f"(arquivos gerados: {[p.name for p in produced]})."
-    )
+    raise RuntimeError(t("separate.no_backing", path=out_dir,
+                         files=[p.name for p in produced]))
 
 
 if __name__ == "__main__":

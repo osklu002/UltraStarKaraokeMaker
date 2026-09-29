@@ -17,8 +17,14 @@ PROTOCOLO
      "with_stems":..., "duet":..., "backtrack":..., "transpose":..., "yarg_export":...,
 #      "keep_harmonies":...,
      "mp4_export":..., "romanize":...,
-     "synced_lyrics_path":..., "audio_format":..., "max_video_resolution":...}
+     "synced_lyrics_path":..., "audio_format":..., "max_video_resolution":...,
+     "ui_lang":...}
     {"cmd":"shutdown"}  -> encerra o servidor.
+
+  "ui_lang" ("pt"/"en", opcional, default "pt"): idioma das mensagens do log,
+  o mesmo da interface do app (29/09/2026 - ver pipeline/i18n.py). Vale POR
+  JOB: o usuário pode trocar o idioma entre duas músicas da fila sem que o
+  servidor reinicie. Não confundir com "language" (idioma cantado da música).
 
   Conclusão (out_dir/_job_status.json, escrito ao fim de cada job):
     {"status":"ok"}  ou  {"status":"error","message":"..."}
@@ -46,6 +52,7 @@ from pathlib import Path
 from rich.console import Console
 
 import main as pipeline_main
+from pipeline.i18n import set_ui_lang
 
 # Nome do arquivo-marcador que liga o vídeo de karaokê sem passar pela UI.
 MP4_MARKER_FILENAME = "MP4-ON.txt"
@@ -82,6 +89,11 @@ def _run_one(job: dict) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "_process_output.log"
     status_path = out_dir / "_job_status.json"
+
+    # Idioma do log DESTE job. Definido sempre (com default "pt"), para um job
+    # sem a chave não herdar o idioma do job anterior. Um app mais antigo não
+    # manda "ui_lang" - e aí o log sai em português, igual a antes.
+    set_ui_lang(job.get("ui_lang", "pt"))
 
     # remove status de uma execução anterior na mesma pasta (reprocessamento)
     try:

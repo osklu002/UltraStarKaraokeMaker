@@ -33,6 +33,7 @@ HISTÓRICO DE DECISÕES E BUGS (resumo - detalhes nos módulos de cada etapa):
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 import traceback
@@ -51,6 +52,7 @@ from pipeline.beatgrid import detect_bpm
 from pipeline.build_song import build_song
 from pipeline.download import download_background_video, get_source_audio
 from pipeline.filenames import sanitize_filename
+from pipeline.i18n import SUPPORTED_LANGS, set_ui_lang, t
 from pipeline.metadata import fetch_metadata
 from pipeline.proc_utils import ensure_ffmpeg_on_path, ffmpeg_exe, run_subprocess
 from pipeline.separate import isolate_backing_vocals, isolate_lead_vocal, separate_vocals
@@ -185,15 +187,58 @@ def resolve_device(requested: str) -> str:
             if sm_val >= min_arch:
                 return "cuda"
             
-            print(
-                f"[AVISO] GPU detectada (capacidade sm_{major}{minor}) mas o torch "
-                f"instalado só suporta a partir de sm_{min_arch} "
-                f"(kernels disponíveis: {torch.cuda.get_arch_list()}) - "
-                "caindo para CPU (mais lento, mas funciona)."
-            )
+            print(t("main.gpu_too_old", cap=f"{major}{minor}", min_arch=min_arch,
+                    archs=torch.cuda.get_arch_list()))
     except Exception:
         pass
     return "cpu"
+
+
+def resolve_whisper_device(device: str) -> str:
+    """
+    Device da TRANSCRIÇÃO (Whisper), que pode ser diferente do resto.
+
+    O Whisper do whisperx roda no faster-whisper, que usa o CTranslate2 - e não
+    o torch. Com GPU AMD (torch ROCm), `torch.cuda.is_available()` é True e o
+    resolve_device devolve "cuda" (Demucs e o alinhamento wav2vec2 rodam na GPU
+    via HIP), mas o CTranslate2 do PyPI só conhece CUDA de verdade: carregar o
+    Whisper com "cuda" quebraria. Quem decide é o próprio CTranslate2: se ele
+    enxerga GPU, usa; senão, a transcrição vai para a CPU e o resto continua na
+    GPU. NVIDIA: nada muda (o CTranslate2 vê a placa). Um build ROCm do
+    CTranslate2 também passa a ser usado sozinho, sem código específico de AMD.
+    """
+    if device != "cuda":
+        return "cpu"
+    _prefer_safe_ct2_allocator_on_hip()
+    try:
+        import ctranslate2
+        if ctranslate2.get_cuda_device_count() > 0:
+            return "cuda"
+    except Exception:
+        pass
+    return "cpu"
+
+
+def _prefer_safe_ct2_allocator_on_hip() -> None:
+    """
+    Com build ROCm do CTranslate2 (GPU AMD), usa o alocador "cub_caching".
+
+    O alocador padrão dele na GPU usa hipMallocAsync, que em placas AMD de
+    consumo CORROMPE buffers em silêncio: o Whisper roda, mas perde de 30% a
+    95% do texto e cada execução do mesmo áudio sai diferente (às vezes com
+    "Memory access fault"). Relatado em CTranslate2 #2090 (RDNA2 e RDNA3.5) e
+    #2012; medido aqui numa RX 7800 XT (RDNA3, 29/09/2026): WER 15-95% e
+    falhas com o padrão, 11-13% estável com cub_caching (CPU: 10%), 13 s em
+    vez de 60-80 s na CPU. Só vale com torch ROCm (HIP); NVIDIA não muda, e
+    quem definiu CT2_CUDA_ALLOCATOR por conta própria é respeitado. Precisa
+    rodar ANTES do primeiro modelo carregado na GPU.
+    """
+    try:
+        import torch
+        if getattr(torch.version, "hip", None):
+            os.environ.setdefault("CT2_CUDA_ALLOCATOR", "cub_caching")
+    except Exception:
+        pass
 
 
 # Modelo do Whisper usado no alinhamento.
@@ -241,6 +286,20 @@ def resolve_whisper_model(requested: str, device: str) -> str:
         return WHISPER_MODEL_DEFAULT
     try:
         import torch
+        # GPU AMD (torch ROCm/HIP): "auto" fica no medium. MEDIDO (29/09/2026,
+        # RX 7800 XT, CTranslate2 ROCm + cub_caching), 3 músicas:
+        #   - Arvingarna "Eloise" (sueco), contra o chart do SingStar: large-v3
+        #     deixou 17 âncoras exatas e 54% das palavras a <=0,3 s; medium
+        #     deu 140 âncoras e 78% (notas casadas 58% -> 78%, contorno de
+        #     pitch 0,67 -> 0,87).
+        #   - Mauro Scocco "Till dom ensamma" (sueco): large-v3 alucinou um
+        #     crédito de legenda de TV ("textning stina hedin ...") e variou
+        #     entre execuções (WER 35-44%); medium 22%.
+        #   - Rick Astley (inglês): medium mais rápido e melhor (2,4% x 5,0%
+        #     de palavras interpoladas).
+        # NVIDIA continua na regra de VRAM abaixo (medida lá, noutro backend).
+        if getattr(getattr(torch, "version", None), "hip", None):
+            return WHISPER_MODEL_DEFAULT
         vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
         if vram_gb >= WHISPER_LARGE_MIN_VRAM_GB:
             return WHISPER_MODEL_BEST
@@ -417,6 +476,18 @@ def export_yarg(yarg_dir: Path, txt_path: Path, stems, source_audio: Path,
     write_song_ini(yarg_dir / "song.ini", name, artist, length_ms, year, genre)
 
 
+def _meta_source_label(source: str) -> str:
+    """
+    metadata.source ("arquivo+MusicBrainz+iTunes", "nenhuma"...) pronto para o
+    log no idioma da interface. "arquivo" e "nenhuma" são VALORES internos
+    (o próprio metadata.py compara com eles) - por isso a tradução acontece só
+    aqui, na hora de mostrar, sem mexer no dado. Nomes de serviço passam
+    direto (29/09/2026).
+    """
+    words = {"arquivo": t("main.meta_source_file"), "nenhuma": t("main.meta_source_none")}
+    return "+".join(words.get(part, part) for part in (source or "").split("+"))
+
+
 def split_duet_artists(artist: str) -> tuple[str | None, str | None]:
     """
     Tenta separar o campo #ARTIST em dois nomes para os headers #P1/#P2 do
@@ -494,32 +565,20 @@ def run_pipeline(
     # (as tags são sempre removidas do texto cantado, marque a caixa ou não).
     tagged_lines = count_singer_tagged_lines(Path(lyrics_path))
     if duet and tagged_lines == 0:
-        console.print(
-            "[yellow]AVISO[/yellow] Modo dueto marcado, mas a letra não tem "
-            "nenhuma tag [bold]P1:[/bold]/[bold]P2:[/bold]. Marque o início de "
-            "cada parte (ex.: \"P1: ...\", \"P2: ...\", \"P1&P2: ...\"). Sem "
-            "tags, o pacote sai com um cantor só."
-        )
+        console.print(t("main.duet_no_tags"))
     elif tagged_lines > 0 and not duet:
-        console.print(
-            "[yellow]AVISO[/yellow] A letra traz tags P1:/P2:, mas a caixa de "
-            "dueto está desmarcada. As tags serão removidas e o pacote sai como "
-            "solo. Marque \"Dueto\" para gerar as duas vozes."
-        )
+        console.print(t("main.tags_no_duet"))
     if device == "cpu" and requested_device != "cpu":
-        console.print(
-            "[yellow]AVISO[/yellow] GPU NVIDIA/CUDA não disponível — o processamento "
-            "vai rodar na CPU (funciona, mas é bem mais lento)."
-        )
+        console.print(t("main.no_cuda"))
 
-    console.rule("[bold cyan]Etapa 1/6 — Obtendo áudio fonte")
+    console.rule(t("main.step1"))
     debug_log("ETAPA 1 - iniciando get_source_audio")
     source = get_source_audio(url, file, work_path / "raw", with_video=with_video,
                                max_video_resolution=max_video_resolution)
     debug_log(f"ETAPA 1 - concluída. audio={source.audio_wav} video={source.video_path}")
-    console.print(f"[green]OK[/green] Áudio em: {source.audio_wav}")
+    console.print(t("main.audio_at", path=source.audio_wav))
     if source.video_path:
-        console.print(f"[green]OK[/green] Vídeo baixado: {source.video_path}")
+        console.print(t("main.video_downloaded", path=source.video_path))
 
     # Videoclipe de fundo para fonte LOCAL: o áudio do pacote continua sendo
     # o arquivo do usuário (ex.: rip de CD, qualidade melhor que YouTube);
@@ -529,42 +588,45 @@ def run_pipeline(
     # com a capa - que já é o fallback natural do jogo.
     if (bg_video or bg_video_url) and source.video_path is None:
         query = (bg_video_url or "").strip() or f"ytsearch1:{artist} {title}"
-        console.print(f"[cyan]—[/cyan] Baixando videoclipe de fundo ({query})...")
+        console.print(t("main.bgvideo_downloading", query=query))
         debug_log(f"ETAPA 1b - baixando videoclipe de fundo: {query}")
         bg_path = download_background_video(query, work_path / "bgvideo")
         if bg_path:
             source.video_path = bg_path
             debug_log(f"ETAPA 1b - concluída. video={bg_path}")
-            console.print(f"[green]OK[/green] Videoclipe de fundo: {bg_path}")
+            console.print(t("main.bgvideo_ok", path=bg_path))
         else:
             debug_log("ETAPA 1b - sem vídeo (falha não-fatal)")
-            console.print(
-                "[yellow]AVISO[/yellow] Não consegui baixar um videoclipe de fundo - "
-                "o pacote seguirá apenas com a imagem de capa."
-            )
+            console.print(t("main.bgvideo_fail"))
 
-    console.rule("[bold cyan]Etapa 2/6 — Separando vocal/instrumental (Demucs)")
+    console.rule(t("main.step2"))
     debug_log("ETAPA 2 - iniciando separate_vocals")
     stems = separate_vocals(source.audio_wav, work_path / "stems", device=device)
     debug_log(f"ETAPA 2 - concluída. vocals={stems.vocals} instrumental={stems.instrumental}")
-    console.print(f"[green]OK[/green] Vocal: {stems.vocals}")
-    console.print(f"[green]OK[/green] Instrumental: {stems.instrumental}")
+    console.print(t("main.vocal_ok", path=stems.vocals))
+    console.print(t("main.instrumental_ok", path=stems.instrumental))
 
-    console.rule("[bold cyan]Etapa 3/6 — Detectando BPM")
+    console.rule(t("main.step3"))
     debug_log("ETAPA 3 - iniciando detect_bpm")
     grid = detect_bpm(stems.instrumental, manual_bpm)
     debug_log(f"ETAPA 3 - concluída. bpm={grid.bpm}")
-    console.print(f"[green]OK[/green] BPM: {grid.bpm:.2f} (este valor BRUTO vai direto para #BPM no .txt)")
+    console.print(t("main.bpm_ok", bpm=grid.bpm))
     if not manual_bpm:
-        console.print("[yellow]AVISO[/yellow] BPM detectado automaticamente - confira antes de confiar 100%.")
+        console.print(t("main.bpm_auto_warn"))
 
-    console.rule("[bold cyan]Etapa 4/6 — Alinhando letra ao áudio (WhisperX, âncora+interpolação)")
+    console.rule(t("main.step4"))
     debug_log("ETAPA 4 - iniciando align_lyrics_to_audio")
-    whisper_model_size = resolve_whisper_model(whisper_model, device)
+    # Transcrição pode ir para a CPU mesmo com o resto na GPU (GPU AMD/ROCm:
+    # ver resolve_whisper_device). O tamanho do modelo segue o device REAL dela.
+    whisper_device = resolve_whisper_device(device)
+    if whisper_device != device:
+        debug_log(f"ETAPA 4 - Whisper na CPU (CTranslate2 sem GPU); alinhamento em {device}")
+        console.print(t("main.whisper_on_cpu"))
+    whisper_model_size = resolve_whisper_model(whisper_model, whisper_device)
     debug_log(f"ETAPA 4 - modelo Whisper: {whisper_model_size} (pedido: {whisper_model})")
-    console.print(f"[cyan]Modelo de reconhecimento:[/cyan] {whisper_model_size}")
+    console.print(t("main.whisper_model", model=whisper_model_size))
     word_timings = align_lyrics_to_audio(
-        stems.vocals, Path(lyrics_path), language=language, device=device,
+        stems.vocals, Path(lyrics_path), language=language, device=device, whisper_device=whisper_device,
         whisper_model_size=whisper_model_size,
         synced_lyrics_path=Path(synced_lyrics_path) if synced_lyrics_path else None,
     )
@@ -588,20 +650,14 @@ def run_pipeline(
         # dueto precisa manter. O 4c (2ª separação Demucs completa, abaixo)
         # preserva as duas vozes e segue valendo.
         debug_log(f"ETAPA 4b - PULADA (modo dueto): interp_frac={interp_frac:.2f}")
-        console.print(
-            f"[dim]{100*interp_frac:.0f}% interpoladas, mas em modo dueto o resgate por "
-            "voz principal isolada é pulado (descartaria o 2º cantor).[/dim]"
-        )
+        console.print(t("main.rescue4b_skip_duet", pct=100 * interp_frac))
     elif interp_frac > 0.10:
-        console.print(
-            f"[yellow]—[/yellow] {100*interp_frac:.0f}% das palavras interpoladas - tentando resgate "
-            "com a voz principal isolada do coro/apoio..."
-        )
+        console.print(t("main.rescue4b_try", pct=100 * interp_frac))
         debug_log(f"ETAPA 4b - resgate: interp_frac={interp_frac:.2f}, iniciando isolate_lead_vocal")
         try:
             lead_vocals = isolate_lead_vocal(stems.vocals, work_path / "lead_vocal")
             retry_timings = align_lyrics_to_audio(
-                lead_vocals, Path(lyrics_path), language=language, device=device,
+                lead_vocals, Path(lyrics_path), language=language, device=device, whisper_device=whisper_device,
                 whisper_model_size=whisper_model_size,
                 synced_lyrics_path=Path(synced_lyrics_path) if synced_lyrics_path else None,
             )
@@ -610,21 +666,12 @@ def run_pipeline(
             debug_log(f"ETAPA 4b - interpoladas: demucs={base_interp} lead={retry_interp}")
             if retry_interp < base_interp:
                 word_timings = retry_timings
-                console.print(
-                    f"[green]OK[/green] Resgate melhorou: {base_interp} -> {retry_interp} "
-                    "palavras interpoladas (usando voz principal isolada)."
-                )
+                console.print(t("main.rescue4b_ok", before=base_interp, after=retry_interp))
             else:
-                console.print(
-                    f"[dim]Resgate não melhorou ({base_interp} -> {retry_interp} interpoladas) - "
-                    "mantendo o alinhamento no stem combinado.[/dim]"
-                )
+                console.print(t("main.rescue4b_no", before=base_interp, after=retry_interp))
         except Exception as e:
             debug_log(f"ETAPA 4b - falhou (não-fatal): {e}")
-            console.print(
-                f"[yellow]AVISO[/yellow] Não consegui isolar a voz principal ({e}) - "
-                "mantendo o alinhamento no stem combinado do Demucs."
-            )
+            console.print(t("main.rescue4b_fail", err=e))
 
     # ETAPA 4d - RESGATE com detecção de voz (VAD) mais sensível.
     #
@@ -651,14 +698,11 @@ def run_pipeline(
     # 4c (que reseparara o Demucs, caro) porque é barato - reusa o mesmo stem.
     interp_frac = alignment_stats(word_timings)["by_source"]["interpolated"] / max(len(word_timings), 1)
     if interp_frac > 0.10:
-        console.print(
-            f"[yellow]—[/yellow] Ainda {100*interp_frac:.0f}% interpoladas - tentando resgate "
-            "com detecção de voz mais sensível..."
-        )
+        console.print(t("main.rescue4d_try", pct=100 * interp_frac))
         debug_log(f"ETAPA 4d - resgate VAD sensivel: interp_frac={interp_frac:.2f}")
         try:
             vad_retry_timings = align_lyrics_to_audio(
-                stems.vocals, Path(lyrics_path), language=language, device=device,
+                stems.vocals, Path(lyrics_path), language=language, device=device, whisper_device=whisper_device,
                 whisper_model_size=whisper_model_size,
                 synced_lyrics_path=Path(synced_lyrics_path) if synced_lyrics_path else None,
                 vad_options={"vad_onset": 0.3, "vad_offset": 0.2},
@@ -668,21 +712,12 @@ def run_pipeline(
             debug_log(f"ETAPA 4d - interpoladas: atual={base_interp} vad_sensivel={vad_retry_interp}")
             if vad_retry_interp < base_interp:
                 word_timings = vad_retry_timings
-                console.print(
-                    f"[green]OK[/green] Resgate melhorou: {base_interp} -> {vad_retry_interp} "
-                    "palavras interpoladas (detecção de voz mais sensível)."
-                )
+                console.print(t("main.rescue4d_ok", before=base_interp, after=vad_retry_interp))
             else:
-                console.print(
-                    f"[dim]Resgate não melhorou ({base_interp} -> {vad_retry_interp} "
-                    "interpoladas) - mantendo o alinhamento anterior.[/dim]"
-                )
+                console.print(t("main.rescue4d_no", before=base_interp, after=vad_retry_interp))
         except Exception as e:
             debug_log(f"ETAPA 4d - falhou (não-fatal): {e}")
-            console.print(
-                f"[yellow]AVISO[/yellow] Não consegui tentar o resgate com VAD sensível ({e}) - "
-                "mantendo o alinhamento que já temos."
-            )
+            console.print(t("main.rescue4d_fail", err=e))
 
     # ETAPA 4c - 2ª SEPARAÇÃO ("outro sorteio do Demucs").
     #
@@ -711,16 +746,12 @@ def run_pipeline(
     # (sinal interno, sem ground truth) e qualquer falha é NÃO-FATAL.
     interp_frac = alignment_stats(word_timings)["by_source"]["interpolated"] / max(len(word_timings), 1)
     if interp_frac * 100 > ALIGNMENT_FAILED_PCT:
-        console.print(
-            f"[yellow]—[/yellow] {100*interp_frac:.0f}% das palavras interpoladas: o "
-            "alinhamento desabou. Separando o vocal de novo (a separação varia a cada "
-            "tentativa) e realinhando..."
-        )
+        console.print(t("main.rescue4c_try", pct=100 * interp_frac))
         debug_log(f"ETAPA 4c - 2a separacao: interp_frac={interp_frac:.2f}")
         try:
             stems2 = separate_vocals(source.audio_wav, work_path / "stems_retry", device=device)
             retry_timings = align_lyrics_to_audio(
-                stems2.vocals, Path(lyrics_path), language=language, device=device,
+                stems2.vocals, Path(lyrics_path), language=language, device=device, whisper_device=whisper_device,
                 whisper_model_size=whisper_model_size,
                 synced_lyrics_path=Path(synced_lyrics_path) if synced_lyrics_path else None,
             )
@@ -732,39 +763,25 @@ def run_pipeline(
                 # o pitch tem que sair do MESMO stem que alinhou, senão as
                 # notas medem uma separação e apontam pra outra
                 stems = stems2
-                console.print(
-                    f"[green]OK[/green] A 2ª separação salvou: {base_interp} -> {retry_interp} "
-                    "palavras interpoladas."
-                )
+                console.print(t("main.rescue4c_ok", before=base_interp, after=retry_interp))
             else:
-                console.print(
-                    f"[dim]A 2ª separação não melhorou ({base_interp} -> {retry_interp} "
-                    "interpoladas) - mantendo a primeira.[/dim]"
-                )
+                console.print(t("main.rescue4c_no", before=base_interp, after=retry_interp))
         except Exception as e:
             debug_log(f"ETAPA 4c - falhou (não-fatal): {e}")
-            console.print(
-                f"[yellow]AVISO[/yellow] Não consegui separar o vocal de novo ({e}) - "
-                "mantendo o alinhamento que já temos."
-            )
+            console.print(t("main.rescue4c_fail", err=e))
 
     stats = alignment_stats(word_timings)
     by_source = stats["by_source"]
     interpolated_count = by_source["interpolated"]
-    console.print(f"[green]OK[/green] {len(word_timings)} palavras processadas.")
-    console.print(
-        f"    [dim]{by_source['anchor']} âncora exata / {by_source['fuzzy']} fuzzy / "
-        f"{by_source['realign']} realinhadas no 2º passe / "
-        f"{by_source['lrc']} início de linha (.lrc) / "
-        f"{interpolated_count} interpoladas (estimadas)[/dim]"
-    )
+    console.print(t("main.words_done", n=len(word_timings)))
+    console.print(t(
+        "main.words_breakdown",
+        anchor=by_source["anchor"], fuzzy=by_source["fuzzy"],
+        realign=by_source["realign"], lrc=by_source["lrc"], interp=interpolated_count,
+    ))
     pct = 100 * interpolated_count / max(len(word_timings), 1)
     if interpolated_count:
-        console.print(
-            f"[yellow]AVISO[/yellow] {pct:.1f}% das palavras ficaram interpoladas "
-            "(não foi possível medi-las no áudio, nem no 2º passe) - "
-            f"maiores sequências seguidas: {stats['interpolated_runs']}."
-        )
+        console.print(t("main.interp_warn", pct=pct, runs=stats["interpolated_runs"]))
         # Acima de metade estimada não é "vale revisar", é OUTRA COISA: o
         # alinhamento não achou onde ancorar e o pacote sai fora de sincronia.
         # Tratar isso com o mesmo aviso amarelo de 5% é entregar lixo calado.
@@ -778,19 +795,8 @@ def run_pipeline(
         # "esta música é difícil", é um dado ruim que a próxima tentativa
         # provavelmente não repete.
         if pct > ALIGNMENT_FAILED_PCT:
-            console.print(
-                f"[bold red]ATENÇÃO[/bold red] A MAIORIA das palavras ({pct:.0f}%) é "
-                "estimativa - o alinhamento não conseguiu reconhecer o canto nesta "
-                "música. O pacote provavelmente sai fora de sincronia."
-            )
-            console.print(
-                "    [yellow]VALE GERAR ESTA MÚSICA DE NOVO: a separação de voz do Demucs "
-                "varia a cada tentativa (mesma entrada, saída diferente - verificado por "
-                "hash), e uma separação ruim derruba o alinhamento inteiro. Normalmente a "
-                "2ª tentativa funciona. Se repetir, confira se a letra bate com ESTA "
-                "gravação (versão ao vivo, remix e refrão escrito uma vez só atrapalham)."
-                "[/yellow]"
-            )
+            console.print(t("main.align_failed", pct=pct))
+            console.print(t("main.align_failed_hint"))
             debug_log(f"ALINHAMENTO FALHOU: {pct:.1f}% interpoladas")
 
     # Aviso "ancorado mas ERRADO" (issue nova, achado no n=60): independente do
@@ -810,26 +816,15 @@ def run_pipeline(
             # que este aviso descreve (ancorar no lugar errado) foi justamente o
             # que o .lrc corrigiu, demovendo âncoras implausíveis. Informa, sem
             # alarme - um vermelho aqui seria treinar o usuário a ignorá-lo.
-            console.print(
-                f"[green]OK[/green] O Whisper reconheceu pouco ({100*wrecall:.0f}% das "
-                f"palavras), mas a letra sincronizada foi aceita e segurou o alinhamento "
-                f"({by_source['lrc']} inícios de linha, {pct:.1f}% estimadas)."
-            )
+            console.print(t("main.recall_lrc_ok", recall=100 * wrecall,
+                            lrc=by_source["lrc"], pct=pct))
             debug_log(
                 f"WORD-RECALL BAIXO: {100*wrecall:.0f}% - coberto pelo .lrc "
                 f"({by_source['lrc']} inícios de linha, {pct:.1f}% interpoladas)"
             )
         else:
-            console.print(
-                f"[bold red]ATENÇÃO[/bold red] O reconhecimento da letra ficou baixo "
-                f"({100*wrecall:.0f}% das palavras) - o Whisper pode ter entendido outra "
-                "coisa e ancorado no lugar errado. O pacote pode sair fora de sincronia."
-            )
-            console.print(
-                "    [yellow]Vale conferir a sincronia e, se estiver ruim, GERAR DE NOVO "
-                "(a separação de voz varia a cada tentativa). Confira também se a letra bate "
-                "com ESTA gravação.[/yellow]"
-            )
+            console.print(t("main.recall_low", recall=100 * wrecall))
+            console.print(t("main.recall_low_hint"))
             debug_log(f"WORD-RECALL BAIXO: {100*wrecall:.0f}% (âncoras podem estar erradas)")
 
     # Checagem de cobertura: avisa se a letra termina muito antes do áudio
@@ -840,15 +835,10 @@ def run_pipeline(
         uncovered = audio_duration - last_word_end
         debug_log(f"Cobertura da letra: última palavra em {last_word_end:.1f}s de {audio_duration:.1f}s totais")
         if uncovered > 10.0:
-            console.print(
-                f"[yellow]AVISO[/yellow] A letra fornecida termina em {last_word_end:.1f}s, mas o áudio "
-                f"tem {audio_duration:.1f}s ({uncovered:.1f}s sem nenhuma palavra no final). "
-                "Isso costuma acontecer quando um refrão/trecho repetido foi escrito só uma vez na letra "
-                "(ex.: letras de sites que usam \"(2x)\"/\"(4x)\" em vez de repetir o texto por extenso). "
-                "Se for o caso, reescreva a letra repetindo o trecho tantas vezes quanto ele é cantado."
-            )
+            console.print(t("main.lyrics_short", last=last_word_end,
+                            duration=audio_duration, uncovered=uncovered))
 
-    console.rule("[bold cyan]Etapa 5/6 — Buscando metadados (capa, ano, gênero)")
+    console.rule(t("main.step5"))
     debug_log("ETAPA 5 - iniciando fetch_metadata")
     # Base dos nomes de arquivo do pacote. SANITIZADA: o texto do usuário pode
     # trazer caractere que o Windows não aceita ("Quem?") ou que muda o caminho
@@ -875,14 +865,17 @@ def run_pipeline(
         f"ETAPA 5 - concluída. fonte={metadata.source} ano={metadata.year} "
         f"gênero={metadata.genre} capa={metadata.cover_path} fundo={metadata.background_path}"
     )
-    console.print(f"[green]OK[/green] Metadados (fonte: {metadata.source}):")
-    console.print(
-        f"    [dim]ano={metadata.year or '—'} / gênero={metadata.genre or '—'} / "
-        f"capa={'sim' if metadata.cover_path else 'não'} / "
-        f"fundo={'fanart.tv' if metadata.background_path else 'capa' if metadata.cover_path else 'não'}[/dim]"
-    )
+    console.print(t("main.meta_ok", source=_meta_source_label(metadata.source)))
+    console.print(t(
+        "main.meta_detail",
+        year=metadata.year or "—",
+        genre=metadata.genre or "—",
+        cover=t("main.word_yes") if metadata.cover_path else t("main.word_no"),
+        bg=("fanart.tv" if metadata.background_path
+            else t("main.word_cover") if metadata.cover_path else t("main.word_no")),
+    ))
 
-    console.rule("[bold cyan]Etapa 6/6 — Extraindo pitch e montando o .txt")
+    console.rule(t("main.step6"))
     debug_log("ETAPA 6 - iniciando build_song")
     final_audio_name = f"{file_base}.{audio_format}"
     cover_filename = metadata.cover_path.name if metadata.cover_path else None
@@ -911,7 +904,7 @@ def run_pipeline(
         video_dest = out_path / video_filename
         shutil.copy(source.video_path, video_dest)
         debug_log(f"Vídeo copiado para o pacote: {video_dest}")
-        console.print(f"[green]OK[/green] Vídeo incluído no pacote: {video_dest}")
+        console.print(t("main.video_included", path=video_dest))
 
     # Faixas separadas (#VOCALS/#INSTRUMENTAL, spec v1 apêndice A.3): deixam o
     # player oferecer volume separado de voz-guia e instrumental. Os stems já
@@ -923,16 +916,14 @@ def run_pipeline(
     instrumental_filename = None
     if with_stems:
         debug_log("Convertendo stems separados para .ogg (with_stems=True)")
-        console.print("[cyan]Convertendo faixas separadas (voz/instrumental)...[/cyan]")
+        console.print(t("main.stems_converting"))
         try:
             vocals_filename = f"{file_base} [VOC].{audio_format}"
             instrumental_filename = f"{file_base} [INSTR].{audio_format}"
             convert_audio(stems.vocals, out_path / vocals_filename, audio_format=audio_format)
             convert_audio(stems.instrumental, out_path / instrumental_filename, audio_format=audio_format)
-            console.print(
-                f"[green]OK[/green] Faixas separadas no pacote: "
-                f"{vocals_filename} / {instrumental_filename}"
-            )
+            console.print(t("main.stems_ok", vocals=vocals_filename,
+                            instrumental=instrumental_filename))
         except Exception as e:
             # Não-fatal: o pacote é perfeitamente válido sem estas faixas (são
             # opcionais na spec). Derrubar uma geração que já deu certo por
@@ -940,7 +931,7 @@ def run_pipeline(
             vocals_filename = None
             instrumental_filename = None
             debug_log(f"Falha ao converter stems: {e}")
-            console.print(f"[yellow]AVISO[/yellow] Não consegui incluir as faixas separadas: {e}")
+            console.print(t("main.stems_fail", err=e))
 
     # Nomes dos cantores para os headers #P1/#P2, derivados do #ARTIST
     # ("Elton John & Kiki Dee" -> "Elton John" / "Kiki Dee"). Só em dueto.
@@ -977,21 +968,18 @@ def run_pipeline(
         debug_log("Romanizando texto das notas (romanize=True)")
         try:
             romanize_notes(song.notes, language)
-            console.print("[green]OK[/green] Letra romanizada (romaji)")
+            console.print(t("main.romanized"))
         except Exception as e:
             debug_log(f"Falha ao romanizar (ignorada): {e}")
-            console.print(
-                f"[yellow]AVISO[/yellow] Não consegui romanizar (pykakasi instalado? "
-                f"rode o setup do ambiente de novo): {e}"
-            )
+            console.print(t("main.romanize_fail", err=e))
 
     txt_path = out_path / f"{file_base}.txt"
     song.write(str(txt_path))
-    console.print(f"[green]OK[/green] Arquivo UltraStar gerado (Python): {txt_path}")
+    console.print(t("main.txt_ok", path=txt_path))
 
     json_path = out_path / "song_data.json"
     song.write_json(str(json_path))
-    console.print(f"[green]OK[/green] JSON intermediário exportado: {json_path}")
+    console.print(t("main.json_ok", path=json_path))
 
     # Backtrack: o áudio do pacote vira o INSTRUMENTAL (sem voz-guia) - karaokê
     # puro. O instrumental já foi separado na Etapa 2; aqui só escolhemos a
@@ -1004,7 +992,7 @@ def run_pipeline(
     # vocal, e só o apoio volta pro instrumental. Não-fatal: se falhar, o
     # pacote sai com o instrumental puro de sempre, como antes.
     if backtrack and keep_harmonies:
-        console.print("[cyan]Recuperando vozes de apoio/harmonias...[/cyan]")
+        console.print(t("main.harmonies_try"))
         debug_log("HARMONIAS - iniciando isolate_backing_vocals")
         try:
             backing = isolate_backing_vocals(stems.vocals, work_path / "backing_vocals")
@@ -1012,22 +1000,20 @@ def run_pipeline(
             mix_backing_into_instrumental(stems.instrumental, backing, mixed)
             audio_src = mixed
             debug_log(f"HARMONIAS - concluído. fonte do áudio final: {mixed}")
-            console.print("[green]OK[/green] Vozes de apoio somadas ao instrumental.")
+            console.print(t("main.harmonies_ok"))
         except Exception as e:
             debug_log(f"HARMONIAS - falhou (ignorado): {e}")
-            console.print(
-                f"[yellow]AVISO[/yellow] Não consegui recuperar as vozes de apoio: {e}. "
-                f"O pacote sai com o instrumental normal."
-            )
+            console.print(t("main.harmonies_fail", err=e))
 
     debug_log(f"Convertendo áudio final para .ogg (backtrack={backtrack}, transpose={transpose}, fonte={audio_src})")
     final_audio_dest = out_path / final_audio_name
     convert_audio(audio_src, final_audio_dest, audio_format=audio_format, pitch_semitones=transpose)
-    console.print(
-        f"[green]OK[/green] Áudio {'(INSTRUMENTAL) ' if backtrack else ''}"
-        f"{f'(TOM {transpose:+d}) ' if transpose else ''}convertido "
-        f"para .ogg: {final_audio_dest}"
-    )
+    console.print(t(
+        "main.audio_converted",
+        instr=t("main.audio_tag_instrumental") if backtrack else "",
+        tone=t("main.audio_tag_tone", n=transpose) if transpose else "",
+        path=final_audio_dest,
+    ))
 
     # Export YARG (opt-in): monta uma subpasta "<file_base> (YARG)" com o
     # layout do YARG. O YARG lê o .txt UltraStar nativo, então só empacotamos
@@ -1037,7 +1023,7 @@ def run_pipeline(
     if yarg_export:
         yarg_dir = out_path / f"{file_base} (YARG)"
         debug_log(f"Exportando para YARG em {yarg_dir} (transpose={transpose})")
-        console.print("[cyan]Exportando pacote para o YARG...[/cyan]")
+        console.print(t("main.yarg_try"))
         try:
             export_yarg(
                 yarg_dir, txt_path, stems, source.audio_wav,
@@ -1045,13 +1031,10 @@ def run_pipeline(
                 title, artist, metadata.year, metadata.genre,
                 transpose=transpose, audio_format=audio_format,
             )
-            console.print(f"[green]OK[/green] Pasta YARG pronta: {yarg_dir}")
+            console.print(t("main.yarg_ok", path=yarg_dir))
         except Exception as e:
             debug_log(f"Falha ao exportar YARG (ignorada): {e}")
-            console.print(
-                f"[yellow]AVISO[/yellow] Não consegui exportar para o YARG: {e}. "
-                f"O pacote UltraStar está OK."
-            )
+            console.print(t("main.yarg_fail", err=e))
 
     # Vídeo de karaokê (opt-in): renderiza "<base> (Karaoke).mp4" - a letra
     # preenchendo sílaba a sílaba por cima do fundo, para tocar em qualquer
@@ -1070,14 +1053,9 @@ def run_pipeline(
     if mp4_export:
         debug_log("Exportando vídeo de karaokê (.mp4)")
         if not ffmpeg_has_libass():
-            console.print(
-                "[yellow]AVISO[/yellow] O ffmpeg encontrado não tem suporte a "
-                "legendas (libass), então não dá para gravar a letra no vídeo. "
-                "O pacote UltraStar está OK. Rode o setup do ambiente de novo "
-                "para baixar o ffmpeg completo."
-            )
+            console.print(t("main.mp4_no_libass"))
         else:
-            console.print("[cyan]Renderizando vídeo de karaokê (.mp4)...[/cyan]")
+            console.print(t("main.mp4_rendering"))
             try:
                 mp4_path = export_karaoke_video(
                     song,
@@ -1088,13 +1066,10 @@ def run_pipeline(
                     background_path=(out_path / background_filename) if background_filename else None,
                     cover_path=metadata.cover_path,
                 )
-                console.print(f"[green]OK[/green] Vídeo de karaokê pronto: {mp4_path}")
+                console.print(t("main.mp4_ok", path=mp4_path))
             except Exception as e:
                 debug_log(f"Falha ao renderizar o vídeo de karaokê (ignorada): {e}")
-                console.print(
-                    f"[yellow]AVISO[/yellow] Não consegui renderizar o vídeo de "
-                    f"karaokê: {e}. O pacote UltraStar está OK."
-                )
+                console.print(t("main.mp4_fail", err=e))
 
     # Limpeza opcional da pasta _work (intermediários: áudio bruto, stems do
     # Demucs, vídeo bruto). Só roda se o usuário pediu, e nunca derruba um
@@ -1106,21 +1081,15 @@ def run_pipeline(
         try:
             if work_path.exists():
                 shutil.rmtree(work_path)
-            console.print(f"[green]OK[/green] Intermediários removidos: {work_path}")
+            console.print(t("main.clean_ok", path=work_path))
         except Exception as e:
             debug_log(f"Falha ao limpar _work (ignorada): {e}")
-            console.print(
-                f"[yellow]AVISO[/yellow] Não consegui remover a pasta de intermediários "
-                f"({work_path}): {e}. O pacote final está OK; a pasta pode ser apagada à mão."
-            )
+            console.print(t("main.clean_fail", path=work_path, err=e))
 
     debug_log("Pipeline concluída com sucesso.")
-    console.rule("[bold green]Pipeline concluída")
-    console.print(f"Pasta pronta em: [bold]{out_path}[/bold]")
-    console.print(
-        "[yellow]Lembrete:[/yellow] confira o .txt manualmente contra a spec oficial e "
-        "teste carregando no UltraStar Deluxe antes de considerar definitivo."
-    )
+    console.rule(t("main.done"))
+    console.print(t("main.out_ready", path=out_path))
+    console.print(t("main.reminder"))
 
 
 if __name__ == "__main__":
@@ -1157,7 +1126,7 @@ if __name__ == "__main__":
     parser.add_argument("--keep-harmonies", action="store_true", help="Mantém as vozes de apoio/harmonias no áudio do pacote (só a voz principal é removida). Custa uma separação a mais.")
     parser.add_argument("--whisper-model", default="auto",
                         choices=["auto", "medium", "large-v3", "large-v2", "small"],
-                        help="Modelo de reconhecimento do alinhamento. auto = large-v3 em GPU com VRAM sobrando, senão medium")
+                        help="Modelo de reconhecimento do alinhamento. auto = large-v3 em GPU NVIDIA com VRAM sobrando, senão medium (GPU AMD: medium)")
     parser.add_argument("--mp4-export", action="store_true", help="Renderiza também um vídeo de karaokê '<base> (Karaoke).mp4' (letra sincronizada gravada por cima do fundo)")
     parser.add_argument("--romanize", action="store_true", help="Reescreve o texto das notas em romaji (Hepburn) via pykakasi - para letras japonesas")
     parser.add_argument(
@@ -1169,7 +1138,12 @@ if __name__ == "__main__":
                         help="Formato de saída de todos os áudios do pacote")
     parser.add_argument("--max-video-resolution", type=int, default=0,
                         help="Teto de altura (px) do vídeo baixado com --with-video. 0 = sem limite")
+    # Idioma das mensagens do log (não confundir com --language, que é o
+    # idioma CANTADO da música). Default pt = o log de sempre. Ver pipeline/i18n.py.
+    parser.add_argument("--ui-lang", default="pt", choices=list(SUPPORTED_LANGS),
+                        help="Idioma das mensagens do log (pt/en)")
     args = parser.parse_args()
+    set_ui_lang(args.ui_lang)
 
     try:
         run_pipeline(
