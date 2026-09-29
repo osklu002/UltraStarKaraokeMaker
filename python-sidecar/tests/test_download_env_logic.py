@@ -74,27 +74,35 @@ def _run_with_env(ffmpeg_val, path_val, fn):
             os.environ["PATH"] = old_path
 
 
+# Caminhos montados com os.path.join/os.pathsep: com barra invertida fixa
+# ("C:\\ff\\bin\\ffmpeg.exe") o teste só passava no Windows - no Linux o
+# dirname disso é "" e o ':' do "C:" ainda quebra o split do PATH.
+_FF_DIR = os.path.join(os.sep, "ff", "bin")
+_FF_EXE = os.path.join(_FF_DIR, "ffmpeg.exe")
+_SYS_DIR = os.path.join(os.sep, "sys")
+_BIN_DIR = os.path.join(os.sep, "bin")
+
+
 def test_prepende_a_pasta_do_ffmpeg_embutido():
-    new_path = _run_with_env(r"C:\Users\x\AppData\Local\USKMaker\bin\ffmpeg.exe",
-                             r"C:\Windows", proc_utils.ensure_ffmpeg_on_path)
+    new_path = _run_with_env(_FF_EXE, _SYS_DIR, proc_utils.ensure_ffmpeg_on_path)
     first = new_path.split(os.pathsep)[0]
-    assert first == r"C:\Users\x\AppData\Local\USKMaker\bin"
-    assert r"C:\Windows" in new_path  # o PATH antigo continua lá
+    assert first == _FF_DIR
+    assert _SYS_DIR in new_path.split(os.pathsep)  # o PATH antigo continua lá
 
 
 def test_idempotente_nao_duplica():
     def twice():
         proc_utils.ensure_ffmpeg_on_path()
         proc_utils.ensure_ffmpeg_on_path()
-    new_path = _run_with_env(r"C:\ff\bin\ffmpeg.exe", r"C:\Windows", twice)
-    assert new_path.split(os.pathsep).count(r"C:\ff\bin") == 1
+    new_path = _run_with_env(_FF_EXE, _SYS_DIR, twice)
+    assert new_path.split(os.pathsep).count(_FF_DIR) == 1
 
 
 def test_sem_ffmpeg_embutido_nao_mexe_no_path():
     # dev com ffmpeg no PATH do sistema: sem USKMAKER_FFMPEG, PATH intacto
-    new_path = _run_with_env(None, r"C:\Windows;C:\bin",
-                             proc_utils.ensure_ffmpeg_on_path)
-    assert new_path == r"C:\Windows;C:\bin"
+    original = os.pathsep.join([_SYS_DIR, _BIN_DIR])
+    new_path = _run_with_env(None, original, proc_utils.ensure_ffmpeg_on_path)
+    assert new_path == original
 
 
 if __name__ == "__main__":
