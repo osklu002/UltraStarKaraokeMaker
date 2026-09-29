@@ -68,6 +68,7 @@ interface EnvCheck {
   ffmpegOk: boolean;
   vorbisOk: boolean;
   gpuName: string | null;
+  gpuVendor: "nvidia" | "amd" | null;
 }
 
 type QueueStatus = "pending" | "running" | "done" | "error" | "cancelled";
@@ -1416,7 +1417,7 @@ function App() {
                 {!env.gpuName
                   ? t("envNoGpu")
                   : cudaOk === false
-                    ? t("envGpuNoCuda", { name: env.gpuName })
+                    ? t(env.gpuVendor === "amd" ? "envGpuNoRocm" : "envGpuNoCuda", { name: env.gpuName })
                     : t("envGpu", { name: env.gpuName })}
               </span>
             </div>

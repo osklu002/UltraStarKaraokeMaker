@@ -833,8 +833,61 @@ struct EnvCheck {
     ffmpeg_ok: bool,
     /// libvorbis é necessário para gerar o .ogg do pacote
     vorbis_ok: bool,
-    /// nome da GPU NVIDIA, ou None = processamento em CPU (bem mais lento)
+    /// nome da GPU (NVIDIA, ou AMD no Linux), ou None = processamento em CPU (bem mais lento)
     gpu_name: Option<String>,
+    /// "nvidia" | "amd" - a interface usa para falar CUDA ou ROCm
+    gpu_vendor: Option<String>,
+}
+
+/// Nome de uma GPU AMD no Linux, para o status de ambiente.
+///
+/// O `nvidia-smi` só enxerga NVIDIA; com torch ROCm uma GPU AMD roda o Demucs
+/// e o alinhamento, mas o app mostrava "sem GPU NVIDIA". Procura no sysfs uma
+/// placa de vídeo com vendor 0x1002 (AMD) e pega o nome pelo `lspci`; sem
+/// lspci, fica um nome genérico. Só Linux: o torch ROCm não existe no Windows.
+#[cfg(target_os = "linux")]
+fn detect_amd_gpu() -> Option<String> {
+    let mut cards: Vec<_> = std::fs::read_dir("/sys/class/drm")
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            let n = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            // "card0", "card1"... (não os conectores "card1-DP-1")
+            n.starts_with("card") && n[4..].chars().all(|c| c.is_ascii_digit())
+        })
+        .collect();
+    cards.sort();
+    for card in cards {
+        let dev = card.join("device");
+        let vendor = std::fs::read_to_string(dev.join("vendor")).unwrap_or_default();
+        if vendor.trim() != "0x1002" {
+            continue;
+        }
+        let name = std::fs::read_link(&dev)
+            .ok()
+            .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
+            .and_then(|slot| std::process::Command::new("lspci").args(["-mm", "-s", &slot]).output().ok())
+            .and_then(|out| amd_name_from_lspci(&String::from_utf8_lossy(&out.stdout)));
+        return Some(name.unwrap_or_else(|| "AMD Radeon".to_string()));
+    }
+    None
+}
+
+/// `lspci -mm`: `2d:00.0 "VGA compatible controller" "Advanced Micro Devices,
+/// Inc. [AMD/ATI]" "Navi 32 [Radeon RX 7700 XT / 7800 XT]" ...` -> o nome
+/// comercial entre colchetes do 4º campo ("AMD Radeon RX 7700 XT / 7800 XT"),
+/// ou o campo inteiro se não houver colchetes.
+fn amd_name_from_lspci(line: &str) -> Option<String> {
+    let device = line.split('"').nth(5)?.trim();
+    if device.is_empty() {
+        return None;
+    }
+    let marketing = device
+        .rfind('[')
+        .and_then(|i| device[i + 1..].strip_suffix(']'))
+        .unwrap_or(device);
+    Some(format!("AMD {marketing}"))
 }
 
 /// Confere se as bibliotecas do pipeline estão REALMENTE instaladas no venv.
@@ -901,12 +954,21 @@ async fn check_environment(app: tauri::AppHandle, lang: String) -> Result<EnvChe
     gpu_cmd.args(["--query-gpu=name", "--format=csv,noheader"]);
     #[cfg(windows)]
     gpu_cmd.creation_flags(CREATE_NO_WINDOW);
-    let gpu_name = match gpu_cmd.output().await {
+    let nvidia_name = match gpu_cmd.output().await {
         Ok(out) if out.status.success() => {
             let name = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").trim().to_string();
             if name.is_empty() { None } else { Some(name) }
         }
         _ => None,
+    };
+    #[cfg(target_os = "linux")]
+    let amd_name = if nvidia_name.is_none() { detect_amd_gpu() } else { None };
+    #[cfg(not(target_os = "linux"))]
+    let amd_name: Option<String> = None;
+    let (gpu_name, gpu_vendor) = match (nvidia_name, amd_name) {
+        (Some(n), _) => (Some(n), Some("nvidia".to_string())),
+        (None, Some(a)) => (Some(a), Some("amd".to_string())),
+        (None, None) => (None, None),
     };
 
     Ok(EnvCheck {
@@ -915,6 +977,7 @@ async fn check_environment(app: tauri::AppHandle, lang: String) -> Result<EnvChe
         ffmpeg_ok,
         vorbis_ok,
         gpu_name,
+        gpu_vendor,
     })
 }
 
@@ -1791,6 +1854,28 @@ fn open_folder(path: String, lang: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| tr_err(&lang, "open_folder", &e))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::amd_name_from_lspci;
+
+    #[test]
+    fn nome_amd_vem_dos_colchetes_do_lspci() {
+        let line = r#"2d:00.0 "VGA compatible controller" "Advanced Micro Devices, Inc. [AMD/ATI]" "Navi 32 [Radeon RX 7700 XT / 7800 XT]" -rc8 -p00 "ASUSTeK Computer Inc." "Device 05fd""#;
+        assert_eq!(amd_name_from_lspci(line).as_deref(), Some("AMD Radeon RX 7700 XT / 7800 XT"));
+    }
+
+    #[test]
+    fn nome_amd_sem_colchetes_usa_o_campo_inteiro() {
+        let line = r#"06:00.0 "Display controller" "Advanced Micro Devices, Inc. [AMD/ATI]" "Raphael" -rc6"#;
+        assert_eq!(amd_name_from_lspci(line).as_deref(), Some("AMD Raphael"));
+    }
+
+    #[test]
+    fn saida_vazia_do_lspci_nao_inventa_nome() {
+        assert_eq!(amd_name_from_lspci(""), None);
+    }
 }
 
 fn main() {
