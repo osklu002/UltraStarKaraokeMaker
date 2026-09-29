@@ -607,7 +607,7 @@ def run_pipeline(
     whisper_device = resolve_whisper_device(device)
     if whisper_device != device:
         debug_log(f"ETAPA 4 - Whisper na CPU (CTranslate2 sem GPU); alinhamento em {device}")
-        console.print("[cyan]Transcrição (Whisper) na CPU; separação e alinhamento na GPU.[/cyan]")
+        console.print(t("main.whisper_on_cpu"))
     whisper_model_size = resolve_whisper_model(whisper_model, whisper_device)
     debug_log(f"ETAPA 4 - modelo Whisper: {whisper_model_size} (pedido: {whisper_model})")
     console.print(t("main.whisper_model", model=whisper_model_size))

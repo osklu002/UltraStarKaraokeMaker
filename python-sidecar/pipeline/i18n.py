@@ -199,6 +199,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "pt": "[cyan]Modelo de reconhecimento:[/cyan] {model}",
         "en": "[cyan]Recognition model:[/cyan] {model}",
     },
+    "main.whisper_on_cpu": {
+        "pt": "[cyan]Transcrição (Whisper) na CPU; separação e alinhamento na GPU.[/cyan]",
+        "en": "[cyan]Transcription (Whisper) on the CPU; separation and alignment on the GPU.[/cyan]",
+    },
     "main.rescue4b_skip_duet": {
         "pt": ("[dim]{pct:.0f}% interpoladas, mas em modo dueto o resgate por voz principal "
                "isolada é pulado (descartaria o 2º cantor).[/dim]"),
