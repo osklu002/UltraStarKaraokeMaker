@@ -193,6 +193,30 @@ def resolve_device(requested: str) -> str:
     return "cpu"
 
 
+def resolve_whisper_device(device: str) -> str:
+    """
+    Device da TRANSCRIÇÃO (Whisper), que pode ser diferente do resto.
+
+    O Whisper do whisperx roda no faster-whisper, que usa o CTranslate2 - e não
+    o torch. Com GPU AMD (torch ROCm), `torch.cuda.is_available()` é True e o
+    resolve_device devolve "cuda" (Demucs e o alinhamento wav2vec2 rodam na GPU
+    via HIP), mas o CTranslate2 do PyPI só conhece CUDA de verdade: carregar o
+    Whisper com "cuda" quebraria. Quem decide é o próprio CTranslate2: se ele
+    enxerga GPU, usa; senão, a transcrição vai para a CPU e o resto continua na
+    GPU. NVIDIA: nada muda (o CTranslate2 vê a placa). Um build ROCm do
+    CTranslate2 também passa a ser usado sozinho, sem código específico de AMD.
+    """
+    if device != "cuda":
+        return "cpu"
+    try:
+        import ctranslate2
+        if ctranslate2.get_cuda_device_count() > 0:
+            return "cuda"
+    except Exception:
+        pass
+    return "cpu"
+
+
 # Modelo do Whisper usado no alinhamento.
 #
 # POR QUE ISTO VIROU UMA OPÇÃO (relato real, 02/09/2026 - "Camouflage - The
@@ -554,11 +578,17 @@ def run_pipeline(
 
     console.rule(t("main.step4"))
     debug_log("ETAPA 4 - iniciando align_lyrics_to_audio")
-    whisper_model_size = resolve_whisper_model(whisper_model, device)
+    # Transcrição pode ir para a CPU mesmo com o resto na GPU (GPU AMD/ROCm:
+    # ver resolve_whisper_device). O tamanho do modelo segue o device REAL dela.
+    whisper_device = resolve_whisper_device(device)
+    if whisper_device != device:
+        debug_log(f"ETAPA 4 - Whisper na CPU (CTranslate2 sem GPU); alinhamento em {device}")
+        console.print("[cyan]Transcrição (Whisper) na CPU; separação e alinhamento na GPU.[/cyan]")
+    whisper_model_size = resolve_whisper_model(whisper_model, whisper_device)
     debug_log(f"ETAPA 4 - modelo Whisper: {whisper_model_size} (pedido: {whisper_model})")
     console.print(t("main.whisper_model", model=whisper_model_size))
     word_timings = align_lyrics_to_audio(
-        stems.vocals, Path(lyrics_path), language=language, device=device,
+        stems.vocals, Path(lyrics_path), language=language, device=device, whisper_device=whisper_device,
         whisper_model_size=whisper_model_size,
         synced_lyrics_path=Path(synced_lyrics_path) if synced_lyrics_path else None,
     )
@@ -589,7 +619,7 @@ def run_pipeline(
         try:
             lead_vocals = isolate_lead_vocal(stems.vocals, work_path / "lead_vocal")
             retry_timings = align_lyrics_to_audio(
-                lead_vocals, Path(lyrics_path), language=language, device=device,
+                lead_vocals, Path(lyrics_path), language=language, device=device, whisper_device=whisper_device,
                 whisper_model_size=whisper_model_size,
                 synced_lyrics_path=Path(synced_lyrics_path) if synced_lyrics_path else None,
             )
@@ -634,7 +664,7 @@ def run_pipeline(
         debug_log(f"ETAPA 4d - resgate VAD sensivel: interp_frac={interp_frac:.2f}")
         try:
             vad_retry_timings = align_lyrics_to_audio(
-                stems.vocals, Path(lyrics_path), language=language, device=device,
+                stems.vocals, Path(lyrics_path), language=language, device=device, whisper_device=whisper_device,
                 whisper_model_size=whisper_model_size,
                 synced_lyrics_path=Path(synced_lyrics_path) if synced_lyrics_path else None,
                 vad_options={"vad_onset": 0.3, "vad_offset": 0.2},
@@ -683,7 +713,7 @@ def run_pipeline(
         try:
             stems2 = separate_vocals(source.audio_wav, work_path / "stems_retry", device=device)
             retry_timings = align_lyrics_to_audio(
-                stems2.vocals, Path(lyrics_path), language=language, device=device,
+                stems2.vocals, Path(lyrics_path), language=language, device=device, whisper_device=whisper_device,
                 whisper_model_size=whisper_model_size,
                 synced_lyrics_path=Path(synced_lyrics_path) if synced_lyrics_path else None,
             )

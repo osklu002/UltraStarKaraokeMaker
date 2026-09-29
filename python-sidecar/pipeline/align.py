@@ -1173,6 +1173,7 @@ def align_lyrics_to_audio(
     realign_gaps: bool = True,
     synced_lyrics_path: Path | None = None,
     vad_options: dict | None = None,
+    whisper_device: str | None = None,
 ) -> list[WordTiming]:
     """
     Retorna uma lista de WordTiming na ordem da letra fornecida, usando a
@@ -1193,14 +1194,19 @@ def align_lyrics_to_audio(
     """
     import whisperx
 
+    # Transcrição e alinhamento podem ir para devices diferentes: o Whisper
+    # roda no CTranslate2, o alinhamento no torch (ver resolve_whisper_device
+    # em main.py - GPU AMD/ROCm). Sem `whisper_device`, os dois usam `device`.
+    whisper_device = whisper_device or device
+
     # float16 é ótimo na GPU (RTX 4060), mas o faster-whisper NÃO suporta
     # float16 na CPU - lá o correto é int8. (Na GPU, use "int8" se faltar VRAM.)
-    compute_type = "float16" if device == "cuda" else "int8"
+    compute_type = "float16" if whisper_device == "cuda" else "int8"
 
     # 1) Transcrição LIVRE (sem substituir nada) - queremos saber o que o
     #    Whisper de fato reconheceu no áudio, com timestamps de alta
     #    confiança para o que ele acertar.
-    whisper_model = _get_whisper_model(whisper_model_size, device, compute_type, language, vad_options)
+    whisper_model = _get_whisper_model(whisper_model_size, whisper_device, compute_type, language, vad_options)
     audio = whisperx.load_audio(str(vocals_wav))
     transcription = whisper_model.transcribe(audio, language=language)
 
