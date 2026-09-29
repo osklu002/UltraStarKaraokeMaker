@@ -286,6 +286,20 @@ def resolve_whisper_model(requested: str, device: str) -> str:
         return WHISPER_MODEL_DEFAULT
     try:
         import torch
+        # GPU AMD (torch ROCm/HIP): "auto" fica no medium. MEDIDO (29/09/2026,
+        # RX 7800 XT, CTranslate2 ROCm + cub_caching), 3 músicas:
+        #   - Arvingarna "Eloise" (sueco), contra o chart do SingStar: large-v3
+        #     deixou 17 âncoras exatas e 54% das palavras a <=0,3 s; medium
+        #     deu 140 âncoras e 78% (notas casadas 58% -> 78%, contorno de
+        #     pitch 0,67 -> 0,87).
+        #   - Mauro Scocco "Till dom ensamma" (sueco): large-v3 alucinou um
+        #     crédito de legenda de TV ("textning stina hedin ...") e variou
+        #     entre execuções (WER 35-44%); medium 22%.
+        #   - Rick Astley (inglês): medium mais rápido e melhor (2,4% x 5,0%
+        #     de palavras interpoladas).
+        # NVIDIA continua na regra de VRAM abaixo (medida lá, noutro backend).
+        if getattr(getattr(torch, "version", None), "hip", None):
+            return WHISPER_MODEL_DEFAULT
         vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
         if vram_gb >= WHISPER_LARGE_MIN_VRAM_GB:
             return WHISPER_MODEL_BEST
@@ -1112,7 +1126,7 @@ if __name__ == "__main__":
     parser.add_argument("--keep-harmonies", action="store_true", help="Mantém as vozes de apoio/harmonias no áudio do pacote (só a voz principal é removida). Custa uma separação a mais.")
     parser.add_argument("--whisper-model", default="auto",
                         choices=["auto", "medium", "large-v3", "large-v2", "small"],
-                        help="Modelo de reconhecimento do alinhamento. auto = large-v3 em GPU com VRAM sobrando, senão medium")
+                        help="Modelo de reconhecimento do alinhamento. auto = large-v3 em GPU NVIDIA com VRAM sobrando, senão medium (GPU AMD: medium)")
     parser.add_argument("--mp4-export", action="store_true", help="Renderiza também um vídeo de karaokê '<base> (Karaoke).mp4' (letra sincronizada gravada por cima do fundo)")
     parser.add_argument("--romanize", action="store_true", help="Reescreve o texto das notas em romaji (Hepburn) via pykakasi - para letras japonesas")
     parser.add_argument(
