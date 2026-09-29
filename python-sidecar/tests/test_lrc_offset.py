@@ -118,10 +118,17 @@ def test_so_ancoras_exatas_contam():
     assert estimate_lrc_offset(_anchors_at(lrc, [1.3] * 8, SOURCE_LRC), lyric, lrc) is None
 
 
+def test_introducao_diferente_de_ate_15_s_e_corrigida():
+    """Casos reais do benchmark: -10,6 s (Lorde), +6,7 s, -7,9 s - outra edição com outra introdução."""
+    lyric, lrc = _song(8, lrc_start=20.0)
+    off = estimate_lrc_offset(_anchors_at(lrc, [-10.6] * 8), lyric, lrc)
+    assert off is not None and abs(off + 10.6) < 1e-9
+
+
 def test_deslocamento_grande_demais_e_outra_montagem():
-    """Acima do teto não é deslocamento: é outra gravação (outra checagem cuida)."""
-    lyric, lrc = _song(8)
-    assert estimate_lrc_offset(_anchors_at(lrc, [9.0] * 8), lyric, lrc) is None
+    """Acima do teto (o mesmo limite de duração da escolha do LRCLIB) não é deslocamento."""
+    lyric, lrc = _song(8, lrc_start=30.0)
+    assert estimate_lrc_offset(_anchors_at(lrc, [20.0] * 8), lyric, lrc) is None
 
 
 def test_linhas_do_lrc_que_nao_casam_com_a_letra_sao_ignoradas():

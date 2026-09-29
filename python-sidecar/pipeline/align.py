@@ -473,7 +473,16 @@ LRC_OFFSET_MIN_LINES = 5
 LRC_OFFSET_AGREE_TOL_S = 0.5  # meia-largura da janela do agrupamento
 LRC_OFFSET_MIN_AGREE_FRAC = 0.4
 LRC_OFFSET_MIN_SHIFT_S = 0.4
-LRC_OFFSET_MAX_SHIFT_S = 5.0  # acima disso é outra montagem (checagem de duração)
+# Teto do deslocamento: o mesmo limite de duração que o app usa ao escolher a
+# letra no LRCLIB (MAX_DURATION_DIFF_S = 15 em App.tsx). Era 5 s, por
+# prudência; com a confirmação pelo áudio abaixo, o teto deixou de ser a rede
+# de segurança. Medido num benchmark de 20 músicas contra charts feitos à mão
+# (29/09/2026): letras sincronizadas noutra edição com introdução diferente
+# vieram -10,6 s (Lorde - Royals), +6,7 s (Lena Philipsson - Dansa i neon) e
+# -7,9 s (Ed Sheeran - Thinking Out Loud), constantes na música inteira - e
+# com reconhecimento baixo arrastaram o chart inteiro (12-21% das palavras a
+# <=0,3 s do chart humano).
+LRC_OFFSET_MAX_SHIFT_S = 15.0
 
 
 def estimate_lrc_offset(
