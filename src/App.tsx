@@ -546,7 +546,10 @@ function App() {
     const unlistenPromise = listen<string>("pipeline-log", (event) => {
       const line = event.payload;
       setLogs((prev) => [...prev, line]);
-      const match = line.match(/Etapa\s+(\d+)\/(\d+)/);
+      // A régua de etapa do sidecar sai no idioma da interface ("Etapa 3/6"
+      // ou "Step 3/6" - ver python-sidecar/pipeline/i18n.py). Aceita as duas:
+      // o idioma pode ter sido trocado com um job já em andamento.
+      const match = line.match(/(?:Etapa|Step)\s+(\d+)\/(\d+)/);
       if (match) {
         setCurrentStep(parseInt(match[1], 10));
       }

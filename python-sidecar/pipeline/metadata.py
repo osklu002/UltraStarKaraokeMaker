@@ -54,6 +54,8 @@ import requests
 from mutagen import File as MutagenFile
 from PIL import Image
 
+from .i18n import t
+
 # User-Agent honesto e identificável, como o MusicBrainz exige. Inclui uma
 # forma de contato (o repositório) - é assim que projetos sérios se
 # identificam para a API deles.
@@ -145,7 +147,7 @@ def _extract_embedded(audio_path: Path, out_cover_path: Path) -> SongMetadata:
         if meta.year or meta.genre or meta.cover_path:
             meta.source = "arquivo"
     except Exception as e:
-        print(f"[metadata] aviso: falha ao ler tags embutidas ({e}) - seguindo sem elas.")
+        print(t("metadata.tags_failed", err=e))
 
     return meta
 
@@ -212,7 +214,7 @@ def _mb_find_release_mbid(artist: str, title: str) -> str | None:
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
-        print(f"[metadata] aviso: busca no MusicBrainz falhou ({e}) - seguindo sem ela.")
+        print(t("metadata.mb_search_failed", err=e))
         return None
 
     # Coleta todos os releases candidatos (de todas as gravações retornadas),
@@ -254,7 +256,7 @@ def _mb_fetch_year_genre(release_mbid: str) -> tuple[int | None, str | None]:
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
-        print(f"[metadata] aviso: lookup de release no MusicBrainz falhou ({e}).")
+        print(t("metadata.mb_release_failed", err=e))
         return None, None
 
     year = None
@@ -295,7 +297,7 @@ def _caa_download_cover(release_mbid: str, out_cover_path: Path) -> Path | None:
         if _save_cover_image(resp.content, out_cover_path):
             return out_cover_path
     except Exception as e:
-        print(f"[metadata] aviso: download da capa no Cover Art Archive falhou ({e}).")
+        print(t("metadata.caa_failed", err=e))
     return None
 
 
@@ -320,7 +322,7 @@ def _itunes_search(artist: str, title: str) -> dict | None:
         results = resp.json().get("results") or []
         return results[0] if results else None
     except Exception as e:
-        print(f"[metadata] aviso: busca no iTunes falhou ({e}) - seguindo sem ela.")
+        print(t("metadata.itunes_failed", err=e))
         return None
 
 
@@ -349,7 +351,7 @@ def _itunes_fill(meta: SongMetadata, artist: str, title: str, out_cover_path: Pa
                     meta.cover_path = out_cover_path
                     used = True
             except Exception as e:
-                print(f"[metadata] aviso: download da capa do iTunes falhou ({e}).")
+                print(t("metadata.itunes_cover_failed", err=e))
 
     if meta.year is None:
         m = re.search(r"\d{4}", result.get("releaseDate") or "")
@@ -392,7 +394,7 @@ def _deezer_fetch_cover(artist: str, title: str, out_cover_path: Path) -> Path |
         if _save_cover_image(img.content, out_cover_path):
             return out_cover_path
     except Exception as e:
-        print(f"[metadata] aviso: busca/capa no Deezer falhou ({e}) - seguindo sem ela.")
+        print(t("metadata.deezer_failed", err=e))
     return None
 
 
@@ -419,7 +421,7 @@ def _mb_find_artist_mbid(artist: str) -> str | None:
         resp.raise_for_status()
         artists = resp.json().get("artists") or []
     except Exception as e:
-        print(f"[metadata] aviso: busca de artista no MusicBrainz falhou ({e}).")
+        print(t("metadata.mb_artist_failed", err=e))
         return None
     # o 1º resultado é o de maior score de correspondência
     return artists[0].get("id") if artists else None
@@ -435,7 +437,7 @@ def _fanarttv_fetch_background(artist_mbid: str, out_bg_path: Path) -> Path | No
     """
     api_key = (os.environ.get("FANARTTV_API_KEY") or "").strip()
     if not api_key:
-        print("[metadata] fanart.tv: FANARTTV_API_KEY não definido neste processo - background pulado.")
+        print(t("metadata.fanart_no_key"))
         return None
     try:
         resp = requests.get(
@@ -449,7 +451,7 @@ def _fanarttv_fetch_background(artist_mbid: str, out_bg_path: Path) -> Path | No
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
-        print(f"[metadata] aviso: consulta ao fanart.tv falhou ({e}) - seguindo sem background.")
+        print(t("metadata.fanart_failed", err=e))
         return None
 
     backgrounds = data.get("artistbackground") or []
@@ -466,7 +468,7 @@ def _fanarttv_fetch_background(artist_mbid: str, out_bg_path: Path) -> Path | No
         if _save_cover_image(img.content, out_bg_path, max_side=1920):
             return out_bg_path
     except Exception as e:
-        print(f"[metadata] aviso: download do background do fanart.tv falhou ({e}).")
+        print(t("metadata.fanart_bg_failed", err=e))
     return None
 
 
@@ -492,7 +494,7 @@ def _lastfm_fill(meta: SongMetadata, artist: str, title: str, out_cover_path: Pa
     """
     api_key = (os.environ.get("LASTFM_API_KEY") or "").strip()
     if not api_key:
-        print("[metadata] Last.fm: LASTFM_API_KEY não definido neste processo - fonte pulada.")
+        print(t("metadata.lastfm_no_key"))
         return False
 
     try:
@@ -512,7 +514,7 @@ def _lastfm_fill(meta: SongMetadata, artist: str, title: str, out_cover_path: Pa
         resp.raise_for_status()
         track = resp.json().get("track") or {}
     except Exception as e:
-        print(f"[metadata] aviso: busca no Last.fm falhou ({e}) - seguindo sem ela.")
+        print(t("metadata.lastfm_failed", err=e))
         return False
 
     used = False
@@ -532,7 +534,7 @@ def _lastfm_fill(meta: SongMetadata, artist: str, title: str, out_cover_path: Pa
                     meta.cover_path = out_cover_path
                     used = True
             except Exception as e:
-                print(f"[metadata] aviso: download da capa do Last.fm falhou ({e}).")
+                print(t("metadata.lastfm_cover_failed", err=e))
 
     if meta.genre is None:
         tags = ((track.get("toptags") or {}).get("tag") or [])
@@ -563,7 +565,7 @@ def _discogs_fetch_cover(artist: str, title: str, out_cover_path: Path) -> Path 
         # fonte opcional: sem token não é erro, mas dizemos o porquê para o
         # "None" não virar mistério em diagnóstico (setx não vale para
         # terminais já abertos - causa clássica de token "sumido")
-        print("[metadata] Discogs: DISCOGS_TOKEN não definido neste processo - fonte pulada.")
+        print(t("metadata.discogs_no_key"))
         return None
 
     headers = {"User-Agent": _USER_AGENT, "Authorization": f"Discogs token={token}"}
@@ -599,11 +601,11 @@ def _discogs_fetch_cover(artist: str, title: str, out_cover_path: Path) -> Path 
                 if _save_cover_image(img.content, out_cover_path):
                     return out_cover_path
         if found_any:
-            print("[metadata] Discogs: resultados encontrados, mas nenhum com imagem utilizável.")
+            print(t("metadata.discogs_no_image"))
         else:
-            print(f"[metadata] Discogs: nenhum resultado para '{artist} - {title}'.")
+            print(t("metadata.discogs_no_result", artist=artist, title=title))
     except Exception as e:
-        print(f"[metadata] aviso: busca/capa no Discogs falhou ({e}) - seguindo sem ela.")
+        print(t("metadata.discogs_failed", err=e))
     return None
 
 
@@ -635,7 +637,7 @@ def _save_cover_image(image_bytes: bytes, out_path: Path, max_side: int = 600) -
         img.save(str(out_path), "JPEG", quality=88)
         return True
     except Exception as e:
-        print(f"[metadata] aviso: imagem de capa inválida/não processável ({e}).")
+        print(t("metadata.bad_cover", err=e))
         return False
 
 

@@ -80,6 +80,9 @@ from pathlib import Path
 
 import numpy as np
 
+# "_t" e não "t": neste módulo `t` é nome de variável local (tempo) em vários
+# laços - importar como `t` seria pedir para uma sombra silenciosa.
+from .i18n import t as _t
 from .numerals import expand_numeral
 
 # Fontes de timestamp, da mais confiável para a menos:
@@ -1240,11 +1243,7 @@ def align_lyrics_to_audio(
         # desconfiança: ela foi conferida de ouvido NESTA gravação (ver
         # lrc_is_approved).
         if approved:
-            print(
-                "[INFO] Letra sincronizada APROVADA pelo usuário - os inícios de linha "
-                "conferidos de ouvido mandam sobre as âncoras do Whisper, e as checagens "
-                "de duração/reconhecimento não se aplicam."
-            )
+            print(_t("align.lrc_approved"))
             # Semeia PRIMEIRO (mesma ordem do modo de baixo reconhecimento):
             # os inícios aprovados entram como verdade e passam a limitar as
             # janelas do realinhamento; a demoção depois limpa as âncoras do
@@ -1252,18 +1251,14 @@ def align_lyrics_to_audio(
             seeded = seed_line_anchors(anchors, lyric_lines, lrc_lines,
                                        override_measured=True)
             if seeded:
-                print(f"[INFO] Letra aprovada: {seeded} inícios de linha semeados (prioritários).")
+                print(_t("align.approved_seeded", n=seeded))
             demoted = demote_anchors_conflicting_with_lrc(
                 anchors, lyric_lines, lrc_lines, audio_duration=audio_duration
             )
             if demoted:
-                print(f"[INFO] Letra aprovada: {demoted} âncoras implausíveis demovidas.")
+                print(_t("align.approved_demoted", n=demoted))
         elif lrc_duration_mismatch(lrc_lines, audio_duration):
-            print(
-                "[AVISO] Letra sincronizada (.lrc) ignorada: a duração implícita não bate "
-                "com a gravação baixada (provável versão diferente - ao vivo, remix, edição). "
-                "O alinhamento segue só com Whisper + forced alignment."
-            )
+            print(_t("align.lrc_mismatch"))
         else:
             # Quem manda nos inícios de linha depende de QUANTO o Whisper
             # entendeu. Com reconhecimento normal, a âncora medida é mais
@@ -1275,11 +1270,7 @@ def align_lyrics_to_audio(
             trust_lrc = recall < LRC_OVERRIDE_RECALL_FLOOR
 
             if trust_lrc:
-                print(
-                    f"[INFO] Reconhecimento baixo ({100*recall:.0f}%) e .lrc com duração "
-                    f"compatível - os inícios de linha da letra sincronizada passam a "
-                    f"ter prioridade sobre as âncoras do Whisper."
-                )
+                print(_t("align.lrc_trusted", recall=100 * recall))
                 # Semeia PRIMEIRO: os postes do .lrc entram como verdade, e só
                 # depois a demoção limpa as âncoras do Whisper que brigam com
                 # eles. Na ordem inversa, a demoção julgaria contra postes que
@@ -1287,18 +1278,18 @@ def align_lyrics_to_audio(
                 seeded = seed_line_anchors(anchors, lyric_lines, lrc_lines,
                                            override_measured=True)
                 if seeded:
-                    print(f"[INFO] Âncoras de linha do .lrc: {seeded} inícios de linha semeados (prioritários).")
+                    print(_t("align.lrc_seeded_priority", n=seeded))
                 demoted = demote_anchors_conflicting_with_lrc(anchors, lyric_lines, lrc_lines, audio_duration=audio_duration)
                 if demoted:
-                    print(f"[INFO] Âncoras de linha do .lrc: {demoted} âncoras implausíveis demovidas.")
+                    print(_t("align.lrc_demoted", n=demoted))
             else:
                 demoted = demote_anchors_conflicting_with_lrc(anchors, lyric_lines, lrc_lines, audio_duration=audio_duration)
                 if demoted:
-                    print(f"[INFO] Âncoras de linha do .lrc: {demoted} âncoras implausíveis demovidas.")
+                    print(_t("align.lrc_demoted", n=demoted))
 
                 seeded = seed_line_anchors(anchors, lyric_lines, lrc_lines)
                 if seeded:
-                    print(f"[INFO] Âncoras de linha do .lrc: {seeded} inícios de linha semeados.")
+                    print(_t("align.lrc_seeded", n=seeded))
 
     # o fim do áudio limita o encadeamento das palavras sem âncora - sem isso
     # a interpolação vaza pra depois da música (ver timings_from_anchors)
@@ -1313,7 +1304,7 @@ def align_lyrics_to_audio(
             word_timings, align_model, metadata, audio, device, language
         )
         if promoted:
-            print(f"[INFO] Realinhamento de janela: {promoted} palavras medidas no 2º passe.")
+            print(_t("align.realigned", n=promoted))
 
     for wt, is_end, singer in zip(word_timings, line_end_flags, singer_flags):
         wt.is_line_end = is_end

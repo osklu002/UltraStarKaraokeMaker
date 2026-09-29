@@ -27,6 +27,7 @@ import numpy as np
 
 from .align import WordTiming
 from .beatgrid import BeatGrid
+from .i18n import t
 from .pitch import PitchExtractor, PitchTrack
 from .syllabify import split_word_syllables
 from .ultrastar_writer import Note, Song
@@ -98,16 +99,10 @@ def fix_rounding_overlaps(notes: list[Note]) -> list[Note]:
 
     if out_of_order:
         pares = ", ".join(f"{i}/{i + 1}" for i in out_of_order)
-        # O log do pipeline é todo em português, mas o usuário do fork lê em
-        # inglês - por isso as duas linhas.
-        print(
-            f"[AVISO] {len(out_of_order)} nota(s) fora de ordem no tempo (notas {pares}): "
-            "um tempo de palavra veio errado do alinhamento. Deixadas como estão para a "
-            "tela de revisão mostrar - confira e corrija antes de usar a música.\n"
-            f"[WARNING] {len(out_of_order)} note(s) out of time order (notes {pares}): "
-            "a word timing came out wrong from alignment. Left as they are so the review "
-            "screen shows them - check and fix them before using the song."
-        )
+        # Antes saíam as duas línguas juntas (o log era todo em português, mas
+        # havia usuário lendo em inglês). Desde 29/09/2026 o log segue o
+        # idioma da interface - ver pipeline/i18n.py - e sai uma linha só.
+        print(t("build_song.out_of_order", n=len(out_of_order), pairs=pares))
 
     return notes
 

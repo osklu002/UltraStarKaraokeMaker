@@ -24,6 +24,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .i18n import t
 from .proc_utils import ffmpeg_exe, run_subprocess
 
 # Quantas vezes tentar de novo quando o YouTube recusa de forma TRANSITÓRIA.
@@ -42,20 +43,17 @@ _TRANSIENT_MARKERS = (
     "429", "too many requests",
 )
 
-# Falhas permanentes que têm uma explicação ÚTIL em português. O objetivo é o
-# usuário ler UMA linha e saber o que fazer, em vez de um traceback de Python.
+# Falhas permanentes que têm uma explicação ÚTIL para o usuário. O objetivo é
+# ele ler UMA linha e saber o que fazer, em vez de um traceback de Python.
+# O segundo item é a CHAVE da frase em pipeline/i18n.py (29/09/2026: a frase
+# sai no idioma da interface, pt ou en - ela vira a mensagem de erro na tela).
 _KNOWN_CAUSES = (
-    ("sign in to confirm your age",
-     "O vídeo tem restrição de idade e exige login no YouTube."),
-    ("private video",
-     "O vídeo é privado."),
-    ("video unavailable",
-     "O vídeo não está disponível (removido ou bloqueado na sua região)."),
-    ("sign in to confirm you",
-     "O YouTube pediu verificação de robô para este download."),
-    ("requested format is not available",
-     "O YouTube não ofereceu nenhum formato compatível para este vídeo."),
-    ("403", "O YouTube recusou o download (403). Costuma ser temporário."),
+    ("sign in to confirm your age", "download.cause_age"),
+    ("private video", "download.cause_private"),
+    ("video unavailable", "download.cause_unavailable"),
+    ("sign in to confirm you", "download.cause_bot"),
+    ("requested format is not available", "download.cause_format"),
+    ("403", "download.cause_403"),
 )
 
 
@@ -78,13 +76,13 @@ def _extract_yt_dlp_error(output: str) -> str:
 def _friendly_download_error(raw: str) -> str:
     """Traduz o erro do yt-dlp para uma frase acionável (ou devolve o cru)."""
     low = raw.lower()
-    for marker, explanation in _KNOWN_CAUSES:
+    for marker, explanation_key in _KNOWN_CAUSES:
         if marker in low:
-            return explanation
-    return raw or "o yt-dlp falhou sem dizer o motivo"
+            return t(explanation_key)
+    return raw or t("download.cause_unknown")
 
 
-def run_yt_dlp(cmd: list[str], what: str = "o vídeo") -> None:
+def run_yt_dlp(cmd: list[str], what: str | None = None) -> None:
     """
     Roda o yt-dlp, tentando de novo em falha transitória e reportando o
     motivo REAL em vez do traceback do subprocesso.
@@ -98,6 +96,10 @@ def run_yt_dlp(cmd: list[str], what: str = "o vídeo") -> None:
     """
     import subprocess
 
+    # `what` já vem traduzido de quem chama (t("download.what_audio")...);
+    # sem ele, "o vídeo"/"the video" no idioma corrente.
+    if what is None:
+        what = t("download.what_video")
     last_error = ""
     for attempt in range(YT_DLP_RETRIES + 1):
         try:
@@ -109,20 +111,12 @@ def run_yt_dlp(cmd: list[str], what: str = "o vídeo") -> None:
             transient = any(m in last_error.lower() for m in _TRANSIENT_MARKERS)
 
             if transient and attempt < YT_DLP_RETRIES:
-                print(
-                    f"[download] O YouTube recusou ({last_error}). "
-                    f"Isso costuma ser temporário - tentando mais uma vez..."
-                )
+                print(t("download.retrying", err=last_error))
                 continue
 
             detalhe = _friendly_download_error(last_error)
-            dica = (
-                " Se persistir, use o modo ARQUIVO LOCAL (baixe a música por "
-                "fora e aponte o app para ela) ou atualize o yt-dlp - o YouTube "
-                "muda com frequência e o yt-dlp precisa acompanhar."
-            )
             raise RuntimeError(
-                f"Não consegui baixar {what} do YouTube. {detalhe}{dica}"
+                t("download.failed", what=what, detail=detalhe)
             ) from None
 
 
@@ -200,10 +194,10 @@ def download_from_youtube(url: str, out_dir: Path) -> Path:
     # NOTA: se o YouTube pedir autenticação (idade/região), gere um cookies.txt
     # e adicione "--cookies", "cookies.txt" na lista acima.
 
-    run_yt_dlp(cmd, "o áudio")
+    run_yt_dlp(cmd, t("download.what_audio"))
 
     if not audio_wav.exists():
-        raise RuntimeError("yt-dlp rodou mas " + str(audio_wav) + " não foi encontrado.")
+        raise RuntimeError(t("download.audio_missing", path=audio_wav))
     return audio_wav
 
 
@@ -246,7 +240,7 @@ def download_from_youtube_with_video(url: str, out_dir: Path, max_resolution: in
         "-o", output_template,
         url,
     ]
-    run_yt_dlp(cmd, "o vídeo")
+    run_yt_dlp(cmd, t("download.what_video"))
 
     # SÓ containers de vídeo entram aqui. O .wav extraído logo abaixo é
     # escrito NESTA pasta com o mesmo prefixo "video." - e numa SEGUNDA
@@ -260,7 +254,7 @@ def download_from_youtube_with_video(url: str, out_dir: Path, max_resolution: in
         p for p in out_dir.glob("video.*") if p.suffix.lower() != ".wav"
     ]
     if not video_candidates:
-        raise RuntimeError("yt-dlp rodou mas nenhum vídeo foi encontrado em " + str(out_dir))
+        raise RuntimeError(t("download.video_missing", path=out_dir))
     video_path = max(video_candidates, key=lambda p: p.stat().st_mtime)
 
     # Extrai o áudio do vídeo já baixado (sem nova transferência de rede),
@@ -270,7 +264,7 @@ def download_from_youtube_with_video(url: str, out_dir: Path, max_resolution: in
     run_subprocess(cmd_extract)
 
     if not audio_wav.exists():
-        raise RuntimeError(f"Falha ao extrair áudio do vídeo baixado: {video_path}")
+        raise RuntimeError(t("download.extract_failed", path=video_path))
 
     return SourceAudio(audio_wav=audio_wav, video_path=video_path)
 
@@ -301,7 +295,7 @@ def download_background_video(url_or_query: str, out_dir: Path) -> Path | None:
     # reprocessar uma música não deve baixar tudo de novo).
     existing = sorted(out_dir.glob("bgvideo.*"), key=lambda p: p.stat().st_mtime, reverse=True)
     if existing:
-        print(f"[OK] Videoclipe de fundo já baixado, reaproveitando: {existing[0]}")
+        print(t("download.bgvideo_reuse", path=existing[0]))
         return existing[0]
 
     # nome fixo (em pasta própria) - evita a heurística de "arquivo mais
@@ -319,14 +313,14 @@ def download_background_video(url_or_query: str, out_dir: Path) -> Path | None:
         # Também passa pelo run_yt_dlp: ganha a retentativa em falha
         # transitória. Continua NÃO-FATAL - o fundo é um extra, e um pacote
         # sem videoclipe é perfeitamente válido.
-        run_yt_dlp(cmd, "o videoclipe de fundo")
+        run_yt_dlp(cmd, t("download.what_bgvideo"))
     except Exception as e:
-        print(f"[AVISO] Download do videoclipe de fundo falhou (seguindo sem vídeo): {e}")
+        print(t("download.bgvideo_failed", err=e))
         return None
 
     candidates = sorted(out_dir.glob("bgvideo.*"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not candidates:
-        print("[AVISO] yt-dlp rodou mas nenhum vídeo de fundo foi encontrado (seguindo sem vídeo).")
+        print(t("download.bgvideo_none"))
         return None
     return candidates[0]
 
@@ -369,7 +363,7 @@ def get_source_audio(
     with_video=True. 0 = sem limite.
     """
     if not url and not file:
-        raise ValueError("Forneça --url (YouTube) ou --file (mp3/wav local).")
+        raise ValueError(t("download.need_source"))
 
     if url:
         if with_video:

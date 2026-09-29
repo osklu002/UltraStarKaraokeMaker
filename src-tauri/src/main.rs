@@ -669,6 +669,11 @@ async fn run_pipeline(
         "synced_lyrics_path": synced_path.as_ref().map(|p| p.to_string_lossy().to_string()),
         "audio_format": input.audio_format,
         "max_video_resolution": input.max_video_resolution,
+        // Idioma das mensagens do log da pipeline = idioma da interface
+        // (29/09/2026, ver python-sidecar/pipeline/i18n.py). Vai POR JOB porque
+        // o servidor é persistente e o usuário pode trocar o idioma no meio da
+        // fila. Não confundir com "language" (idioma cantado da música).
+        "ui_lang": lang,
     });
     let job_line = serde_json::to_string(&job)
         .map_err(|e| tr_err(lang, "job_serialize", &e))?;
@@ -951,14 +956,19 @@ async fn regenerate_video(app: tauri::AppHandle, out_dir: String, lang: String) 
     // o resto da pipeline é invocada, então importações relativas funcionam.
     cmd.arg("-m").arg("pipeline.video_export").arg("--dir").arg(&out_dir);
     cmd.current_dir(&code_dir);
+    // As mensagens de erro do video_export (a última linha do stderr vira o
+    // erro na tela, abaixo) já existem em pt/en e escolhem o idioma por
+    // USKMAKER_LANG - só faltava o app passar a escolha do usuário. Sem isto
+    // valia o locale da máquina, que pode não bater com a interface.
+    cmd.env("USKMAKER_LANG", &lang);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
     match cmd.output().await {
         Ok(out) if out.status.success() => {
             Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
         }
-        // O sidecar já devolve mensagem em português para os casos previstos
-        // (song_data.json ausente, áudio ausente, ffmpeg sem libass).
+        // O sidecar já devolve mensagem no idioma da interface para os casos
+        // previstos (song_data.json ausente, áudio ausente, ffmpeg sem libass).
         Ok(out) => {
             let err = String::from_utf8_lossy(&out.stderr);
             let last = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");

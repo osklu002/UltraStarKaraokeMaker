@@ -62,6 +62,8 @@ from pathlib import Path
 import numpy as np
 import librosa
 
+from .i18n import t
+
 
 @dataclass
 class BeatGrid:
@@ -163,13 +165,8 @@ def detect_bpm(vocal_or_full_wav: Path, manual_bpm: float | None = None) -> Beat
         # não ser surpresa silenciosa - sem mexer no valor.
         if not (_OCTAVE_MIN_BPM <= manual_bpm < _OCTAVE_MAX_BPM):
             beat_ms = 60000.0 / (manual_bpm * 4) if manual_bpm > 0 else 0.0
-            print(
-                f"[BPM] Manual {manual_bpm:.2f} usado como veio. Nota: fora da "
-                f"faixa {_OCTAVE_MIN_BPM:.0f}-{_OCTAVE_MAX_BPM:.0f} a grade fica "
-                f"mais grossa (1 beat = {beat_ms:.0f} ms), o que arredonda mais "
-                f"as notas. Um múltiplo por 2 do mesmo andamento dá a mesma "
-                f"música com notas mais precisas."
-            )
+            print(t("beatgrid.manual_out_of_range", bpm=manual_bpm, lo=_OCTAVE_MIN_BPM,
+                    hi=_OCTAVE_MAX_BPM, beat_ms=beat_ms))
         return BeatGrid(bpm=manual_bpm)
 
     y, sr = librosa.load(str(vocal_or_full_wav), sr=None)
@@ -180,10 +177,8 @@ def detect_bpm(vocal_or_full_wav: Path, manual_bpm: float | None = None) -> Beat
     raw_bpm = float(np.asarray(tempo).item())
     bpm = fold_bpm_to_octave(raw_bpm)
     if abs(bpm - raw_bpm) > 0.01:
-        print(
-            f"[BPM] Correcao de oitava: {raw_bpm:.2f} -> {bpm:.2f} "
-            f"(faixa alvo {_OCTAVE_MIN_BPM:.0f}-{_OCTAVE_MAX_BPM:.0f})"
-        )
+        print(t("beatgrid.octave_fix", raw=raw_bpm, bpm=bpm, lo=_OCTAVE_MIN_BPM,
+                hi=_OCTAVE_MAX_BPM))
 
     return BeatGrid(bpm=bpm)
 
