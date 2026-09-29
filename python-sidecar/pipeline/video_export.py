@@ -546,9 +546,11 @@ def ffmpeg_has_libass() -> bool:
 
 # Mensagens deste caminho AVULSO em dois idiomas.
 #
-# O log da pipeline é todo em português e continua assim - ele é lido dentro do
-# app, que já é bilíngue e enquadra tudo. Este caminho é diferente: o usuário
-# roda no terminal, SOZINHO, e a mensagem é a única coisa que ele vê. Um
+# (29/09/2026: o log da pipeline também passou a seguir o idioma da interface,
+# com a tabela de pipeline/i18n.py - lá o default é pt e o idioma vem do job.
+# Esta tabela continua separada porque a regra de default é outra.) Este
+# caminho é diferente: o usuário também roda no terminal, SOZINHO, fora do
+# app, e a mensagem é a única coisa que ele vê. Um
 # usuário de língua inglesa travou exatamente aqui num uso real (02/09/2026),
 # olhando para um prompt em português sem saber o que responder.
 _MSG = {
