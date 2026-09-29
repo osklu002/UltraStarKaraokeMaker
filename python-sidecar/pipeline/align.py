@@ -515,6 +515,59 @@ def estimate_lrc_offset(
     return offset
 
 
+# Confirmação pelo ÁUDIO (29/09/2026): as âncoras do Whisper nesta etapa ainda
+# não foram limpas, e em música repetitiva elas podem formar um agrupamento
+# falso. Caso real: "Herreys - Diggi-Loo Diggi-Ley" (sueco, 35% de
+# reconhecimento) deu um agrupamento em -1,09 s; o .lrc cru estava certo
+# (+0,10 s do chart feito à mão) e o deslocamento o deixou ~1 s errado. A
+# evidência independente do Whisper é o próprio vocal: início de linha de um
+# .lrc certo cai onde a voz VOLTA depois de uma pausa. Medido no stem de vocal
+# (inícios de linha a <=0,25 s de um ataque de voz):
+#   Till dom ensamma (deslocamento real +1,31 s): 2% sem deslocar, 26% deslocado
+#   Diggi-Loo Diggi-Ley (falso -1,09 s):          7% sem deslocar, 10% deslocado
+# Só aplica quando o deslocamento melhora isso com folga.
+LRC_OFFSET_ONSET_TOL_S = 0.25
+LRC_OFFSET_MIN_ONSET_GAIN = 0.10
+
+
+def vocal_onsets(audio: np.ndarray, sample_rate: int = 16000) -> np.ndarray:
+    """
+    Instantes (s) em que a voz começa depois de uma pausa: energia em quadros
+    de 10 ms, voz = acima de -35 dB do pico, sustentada por >= 80 ms e
+    precedida de >= 150 ms de silêncio. Feito para o stem de vocal.
+    """
+    hop = sample_rate // 100
+    n = len(audio) // hop
+    if n < 30:
+        return np.array([])
+    x = np.asarray(audio[: n * hop], dtype=np.float64)
+    energy = np.add.reduceat(x * x, np.arange(0, n * hop, hop)) / hop
+    db = 10 * np.log10(energy + 1e-12)
+    voiced = db > db.max() - 35
+    c = np.concatenate([[0], np.cumsum(voiced)])
+    frames = np.arange(15, n - 8)
+    sustained = (c[frames + 8] - c[frames]) == 8        # quadros f..f+7 com voz
+    after_pause = (c[frames] - c[frames - 15]) == 0     # quadros f-15..f-1 sem voz
+    return frames[sustained & after_pause] / 100.0
+
+
+def lrc_offset_confirmed_by_onsets(
+    onsets: np.ndarray,
+    lrc_lines: list[tuple[float, str]],
+    offset: float,
+) -> bool:
+    """O deslocamento põe claramente mais inícios de linha em ataques reais de voz?"""
+    if len(onsets) < 5 or not lrc_lines:
+        return False
+    starts = np.array([t for t, _ in lrc_lines])
+
+    def agreement(shift: float) -> float:
+        dist = np.abs(onsets[None, :] - (starts + shift)[:, None]).min(axis=1)
+        return float(np.mean(dist <= LRC_OFFSET_ONSET_TOL_S))
+
+    return agreement(offset) >= agreement(0.0) + LRC_OFFSET_MIN_ONSET_GAIN
+
+
 def shift_lrc_lines(lrc_lines: list[tuple[float, str]], offset: float) -> list[tuple[float, str]]:
     """Desloca todos os inícios do .lrc por `offset` segundos (sem ficar negativo)."""
     return [(max(0.0, t + offset), text) for t, text in lrc_lines]
@@ -1339,8 +1392,11 @@ def align_lyrics_to_audio(
             # reconhecimento baixo, ainda passa por cima delas nos inícios.
             lrc_offset = estimate_lrc_offset(anchors, lyric_lines, lrc_lines)
             if lrc_offset is not None:
-                lrc_lines = shift_lrc_lines(lrc_lines, lrc_offset)
-                print(_t("align.lrc_offset", offset=lrc_offset))
+                if lrc_offset_confirmed_by_onsets(vocal_onsets(audio), lrc_lines, lrc_offset):
+                    lrc_lines = shift_lrc_lines(lrc_lines, lrc_offset)
+                    print(_t("align.lrc_offset", offset=lrc_offset))
+                else:
+                    print(_t("align.lrc_offset_rejected", offset=lrc_offset))
             # Quem manda nos inícios de linha depende de QUANTO o Whisper
             # entendeu. Com reconhecimento normal, a âncora medida é mais
             # precisa que o início de linha do .lrc e continua ganhando. Abaixo

@@ -20,8 +20,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import numpy as np
+
 from pipeline.align import (
     LRC_OFFSET_MIN_LINES,
+    lrc_offset_confirmed_by_onsets,
+    vocal_onsets,
     SOURCE_ANCHOR,
     SOURCE_FUZZY,
     SOURCE_LRC,
@@ -132,6 +136,42 @@ def test_shift_desloca_tudo_e_nao_fica_negativo():
     shifted = shift_lrc_lines([(0.5, "a"), (10.0, "b")], -1.0)
     assert shifted == [(0.0, "a"), (9.0, "b")]
     assert shift_lrc_lines([(3.0, "c")], 1.25) == [(4.25, "c")]
+
+
+# --- confirmação pelo áudio ---------------------------------------------------
+
+def _vocal(segments, dur=30.0, sr=16000):
+    """Áudio sintético: silêncio com trechos de "voz" (seno) em [ini, fim)."""
+    y = np.zeros(int(dur * sr))
+    t = np.arange(len(y)) / sr
+    for a, b in segments:
+        m = (t >= a) & (t < b)
+        y[m] = 0.5 * np.sin(2 * np.pi * 220 * t[m])
+    return y
+
+
+def test_vocal_onsets_acha_o_inicio_de_cada_trecho_apos_pausa():
+    on = vocal_onsets(_vocal([(2.0, 4.0), (6.0, 8.0), (8.1, 9.0), (12.5, 15.0)]))
+    # 8.1 vem depois de só 0,1 s de pausa: não conta como novo ataque
+    assert np.allclose(on, [2.0, 6.0, 12.5], atol=0.02), on
+
+
+def test_audio_confirma_deslocamento_real():
+    """Linhas do .lrc 1,3 s adiantadas em relação aos ataques da voz -> confirma."""
+    onsets = np.array([5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0])
+    lrc = [(t - 1.3, f"l{i}") for i, t in enumerate(onsets)]
+    assert lrc_offset_confirmed_by_onsets(onsets, lrc, 1.3)
+
+
+def test_audio_rejeita_deslocamento_falso():
+    """.lrc já certo: deslocar 1,1 s tira as linhas dos ataques -> rejeita."""
+    onsets = np.array([5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0])
+    lrc = [(t + 0.05, f"l{i}") for i, t in enumerate(onsets)]
+    assert not lrc_offset_confirmed_by_onsets(onsets, lrc, -1.1)
+
+
+def test_audio_sem_ataques_suficientes_nao_confirma():
+    assert not lrc_offset_confirmed_by_onsets(np.array([5.0, 10.0]), [(3.7, "a"), (8.7, "b")], 1.3)
 
 
 if __name__ == "__main__":
