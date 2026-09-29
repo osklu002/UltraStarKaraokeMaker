@@ -676,6 +676,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "pt": "[INFO] Âncoras de linha do .lrc: {n} âncoras implausíveis demovidas.",
         "en": "[INFO] .lrc line anchors: {n} implausible anchors demoted.",
     },
+    "align.lrc_offset": {
+        "pt": "[INFO] O .lrc estava deslocado {offset:+.2f} s em relação ao áudio (medido nas âncoras do Whisper) - tempos corrigidos.",
+        "en": "[INFO] The .lrc was offset by {offset:+.2f} s from the audio (measured on Whisper's anchors) - timings corrected.",
+    },
+    "align.lrc_offset_rejected": {
+        "pt": "[INFO] As âncoras do Whisper sugeriam o .lrc deslocado {offset:+.2f} s, mas o áudio não confirmou - .lrc mantido como está.",
+        "en": "[INFO] Whisper's anchors suggested the .lrc was offset by {offset:+.2f} s, but the audio didn't confirm it - .lrc left as is.",
+    },
     "align.lrc_seeded": {
         "pt": "[INFO] Âncoras de linha do .lrc: {n} inícios de linha semeados.",
         "en": "[INFO] .lrc line anchors: {n} line starts seeded.",
