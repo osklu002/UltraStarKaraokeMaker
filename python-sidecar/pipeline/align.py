@@ -1311,6 +1311,50 @@ def _get_align_model(language: str, device: str):
     return _ALIGN_CACHE[key]
 
 
+def transcribe_words(
+    audio,
+    language: str,
+    device: str = "cuda",
+    whisper_model_size: str = "medium",
+    vad_options: dict | None = None,
+    whisper_device: str | None = None,
+) -> list[dict]:
+    """
+    Passos 1-2 da estratégia: transcrição LIVRE do Whisper + alinhamento
+    wav2vec2 da própria transcrição. Devolve as palavras do Whisper com
+    timestamps ({"word", "start", "end", "score"}), ainda sem letra real.
+    """
+    import whisperx
+
+    # Transcrição e alinhamento podem ir para devices diferentes: o Whisper
+    # roda no CTranslate2, o alinhamento no torch (ver resolve_whisper_device
+    # em main.py - GPU AMD/ROCm). Sem `whisper_device`, os dois usam `device`.
+    whisper_device = whisper_device or device
+
+    # float16 é ótimo na GPU (RTX 4060), mas o faster-whisper NÃO suporta
+    # float16 na CPU - lá o correto é int8. (Na GPU, use "int8" se faltar VRAM.)
+    compute_type = "float16" if whisper_device == "cuda" else "int8"
+
+    # 1) Transcrição LIVRE (sem substituir nada) - queremos saber o que o
+    #    Whisper de fato reconheceu no áudio, com timestamps de alta
+    #    confiança para o que ele acertar.
+    whisper_model = _get_whisper_model(whisper_model_size, whisper_device, compute_type, language, vad_options)
+    transcription = whisper_model.transcribe(audio, language=language, task=WHISPER_TASK)
+
+    # 2) Alinha a transcrição PRÓPRIA do Whisper (não a letra real) - dá
+    #    timestamps precisos para tudo que foi efetivamente reconhecido.
+    align_model, metadata = _get_align_model(language, device)
+    aligned = whisperx.align(
+        transcription["segments"], align_model, metadata, audio, device, return_char_alignments=False
+    )
+
+    whisper_words: list[dict] = []
+    for seg in aligned["segments"]:
+        for w in seg.get("words", []):
+            whisper_words.append(w)
+    return whisper_words
+
+
 def align_lyrics_to_audio(
     vocals_wav: Path,
     lyrics_path: Path,
@@ -1341,33 +1385,11 @@ def align_lyrics_to_audio(
     """
     import whisperx
 
-    # Transcrição e alinhamento podem ir para devices diferentes: o Whisper
-    # roda no CTranslate2, o alinhamento no torch (ver resolve_whisper_device
-    # em main.py - GPU AMD/ROCm). Sem `whisper_device`, os dois usam `device`.
-    whisper_device = whisper_device or device
-
-    # float16 é ótimo na GPU (RTX 4060), mas o faster-whisper NÃO suporta
-    # float16 na CPU - lá o correto é int8. (Na GPU, use "int8" se faltar VRAM.)
-    compute_type = "float16" if whisper_device == "cuda" else "int8"
-
-    # 1) Transcrição LIVRE (sem substituir nada) - queremos saber o que o
-    #    Whisper de fato reconheceu no áudio, com timestamps de alta
-    #    confiança para o que ele acertar.
-    whisper_model = _get_whisper_model(whisper_model_size, whisper_device, compute_type, language, vad_options)
     audio = whisperx.load_audio(str(vocals_wav))
-    transcription = whisper_model.transcribe(audio, language=language, task=WHISPER_TASK)
-
-    # 2) Alinha a transcrição PRÓPRIA do Whisper (não a letra real) - dá
-    #    timestamps precisos para tudo que foi efetivamente reconhecido.
-    align_model, metadata = _get_align_model(language, device)
-    aligned = whisperx.align(
-        transcription["segments"], align_model, metadata, audio, device, return_char_alignments=False
+    whisper_words = transcribe_words(
+        audio, language, device, whisper_model_size, vad_options, whisper_device
     )
-
-    whisper_words: list[dict] = []
-    for seg in aligned["segments"]:
-        for w in seg.get("words", []):
-            whisper_words.append(w)
+    align_model, metadata = _get_align_model(language, device)
 
     # 3) Âncoras exatas + fuzzy sobre a letra real.
     real_words, line_end_flags, singer_flags = _load_lyrics_words_with_line_ends(
