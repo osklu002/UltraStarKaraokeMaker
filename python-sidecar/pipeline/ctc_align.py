@@ -650,7 +650,7 @@ def attach_syllable_starts(timings: list, token_times: list, dictionary: dict[st
 
     n = 0
     for wt, tt in zip(timings, token_times):
-        syls = [x for x in split_word_syllables(wt.word) if any(c.isalnum() for c in x)]
+        syls = [x for x in split_word_syllables(wt.word, language) if any(c.isalnum() for c in x)]
         wt.syllable_starts = syllable_starts(syls, tt, dictionary, language) if tt else None
         n += wt.syllable_starts is not None
     return n

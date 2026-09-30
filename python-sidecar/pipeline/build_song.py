@@ -702,6 +702,7 @@ def build_notes(
     grid: BeatGrid,
     gap_ms: int,
     pitch_extractor: PitchExtractor,
+    language: str | None = None,
 ) -> tuple[list[Note], list[int]]:
     """
     Retorna (notes, phrase_breaks_after_index).
@@ -718,7 +719,7 @@ def build_notes(
     phrase_breaks: list[int] = []
 
     for idx, wt in enumerate(word_timings):
-        syllables = split_word_syllables(wt.word)
+        syllables = split_word_syllables(wt.word, language)
         # sílabas 100% pontuação (ex.: um "'" isolado por espaço na letra)
         # não têm conteúdo cantável e não devem virar nota própria.
         syllables = [s for s in syllables if any(c.isalnum() for c in s)]
@@ -838,7 +839,8 @@ def build_song(
     first_start = min((wt.start for wt in word_timings), default=0.0)
     effective_gap_ms = round_gap_ms(max(0, round(first_start * 1000)) + gap_ms)
 
-    notes, phrase_breaks = build_notes(word_timings, vocals_wav_path, grid, effective_gap_ms, pitch_extractor)
+    notes, phrase_breaks = build_notes(word_timings, vocals_wav_path, grid, effective_gap_ms, pitch_extractor,
+                                       language=language)
 
     # Tom fixo: transpõe a melodia inteira N semitons, uniforme, DEPOIS de toda
     # a estimativa/dobra de pitch. Casa com o áudio deslocado pelo mesmo N em

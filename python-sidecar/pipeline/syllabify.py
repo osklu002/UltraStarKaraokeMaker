@@ -18,11 +18,43 @@ import pyphen
 
 _dic = pyphen.Pyphen(lang="pt_BR")
 
+# Dicionário por idioma da música (código do Whisper). Antes TODO idioma usava
+# o pt_BR, e em inglês ele parte palavra demais ("lo-ve"): cada sílaba a mais é
+# uma nota a mais. MEDIDO (01/10/2026) contra a divisão dos charts feitos à mão
+# de uma biblioteca de ~500 músicas (144 mil palavras em inglês, 8,4 mil em
+# sueco) - mesma contagem de sílabas que o chart / divisão idêntica:
+#   inglês  pt_BR 0,807 / 0,781 (13,6% com sílaba A MAIS) -> en_US 0,935 / 0,854 (0,5%)
+#   sueco   pt_BR 0,934 / 0,887                          -> sv    0,962 / 0,906
+# left/right = menor pedaço permitido na borda da palavra. Em inglês, 1 letra
+# ("a-way") parte palavra demais no resto (same count 0,833); em sueco 1 na
+# esquerda foi o melhor. Idioma sem entrada aqui segue no pt_BR, como antes.
+_LANG_DICTS = {
+    "en": ("en_US", 2, 2),
+    "sv": ("sv", 1, 2),
+}
+_dic_cache: dict[str, pyphen.Pyphen] = {}
 
-def split_word_syllables(word: str) -> list[str]:
+# Contrações faladas que o dicionário não conhece e que se cantam em 2 sílabas
+# (as mais comuns nos charts: "gonna" aparece 506 vezes, sempre "gon-na").
+_EN_SPLITS = {"gonna": 3, "wanna": 3, "gotta": 3}
+
+
+def _dictionary(language: str | None) -> pyphen.Pyphen:
+    entry = _LANG_DICTS.get((language or "").lower())
+    if entry is None:
+        return _dic
+    key = entry[0]
+    if key not in _dic_cache:
+        _dic_cache[key] = pyphen.Pyphen(lang=entry[0], left=entry[1], right=entry[2])
+    return _dic_cache[key]
+
+
+def split_word_syllables(word: str, language: str | None = None) -> list[str]:
     """
     Retorna a lista de sílabas de uma palavra, preservando pontuação simples
     (mantida na última sílaba para não quebrar a leitura da letra na tela).
+    `language` = código do idioma da música ("en", "sv", ...); sem ele (ou
+    idioma sem dicionário próprio) usa o pt_BR de sempre.
     """
     if not word:
         return []
@@ -53,8 +85,12 @@ def split_word_syllables(word: str) -> list[str]:
         # do que arriscar uma hifenização sem sentido.
         return [leading_punct + core + trailing_punct]
 
-    hyphenated = _dic.inserted(core)  # ex.: "ca-ro-lin-da"
-    syllables = hyphenated.split("-")
+    cut = _EN_SPLITS.get(core.lower()) if (language or "").lower() == "en" else None
+    if cut:
+        syllables = [core[:cut], core[cut:]]
+    else:
+        hyphenated = _dictionary(language).inserted(core)  # ex.: "ca-ro-lin-da"
+        syllables = hyphenated.split("-")
 
     syllables[0] = leading_punct + syllables[0]
     syllables[-1] = syllables[-1] + trailing_punct
