@@ -10,6 +10,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **In a queue, the first song in a different language than the one before it failed.** The error was `'50359' is not a valid task`. The recognition model is kept loaded between songs of a queue, and when the language changed the library it comes from rebuilt its settings with an internal number where it expected the word "transcribe". The app now always says "transcribe" explicitly, so the language can change freely between songs. Found when a batch of English songs followed by Swedish ones failed on every Swedish song.
 
+- **Held words came out as `you~~~`, with several `~` notes at the same pitch.** A `~` note is meant to follow the melody when the pitch changes during a held syllable, but short dropouts in breathy or falsetto singing also split the syllable, each piece becoming another `~` at exactly the same pitch. Those are now folded into the note before them (only when the pitch and note type match and the gap is under a quarter second; word ends and line breaks are never merged). On "a-ha - Take On Me", `~` notes went from 14.6% of all notes to 9.2% (the hand-made chart has 4.0%); other songs changed by 0 to 1.7 points. `~` notes that do change pitch stay exactly as before.
+
+## [0.22.0] — 2026-09-29 (contribution by [@osklu002](https://github.com/osklu002))
+
+### Added
+- **Linux & Tauri v2 Support**: Migration to Tauri v2 and addition of a Linux platform layer (paths, opening folders). New `setup-sidecar.sh` script to manage the virtual environment on Linux.
+- **AMD GPU Support (ROCm)**: Hardware detection recognizes AMD GPUs, defaults to Whisper Medium for AMD, and enables CTranslate2 cub_caching allocator with CPU fallback.
+- **Sidecar i18n**: AI pipeline logs now follow the language chosen in the frontend user interface.
+
+### Fixed
+- **Alignment Time Offset**: Allowed .lrc time offset compensation up to 15 seconds when confirmed by the vocal stem.
+- **Freestyle Notes Outlier Issue (swift-f0)**: Recalibrated confidence threshold to 0.55 following swift-f0 0.2 internal changes, preventing excessive unscored freestyle notes.
+- **Octave Outliers in Pitch**: Fold octave outliers (>18 semitones away) back toward the local melody context, preserving pitch class.
+- **Review Screen Audio Clock**: Web Audio API used for review audio playback, ensuring accurate timeline synchronization.
+- **Cross-Platform Tests**: Tests with hardcoded Windows `C:\` paths adjusted for OS independence.
+
 ## [0.21.3] — 2026-09-25 (contribution by [@DJ-Joel](https://github.com/DJ-Joel))
 
 ### Fixed
