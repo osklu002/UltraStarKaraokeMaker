@@ -565,3 +565,19 @@ def test_end_crosses_short_dropout_but_not_long_silence_and_never_shrinks():
     assert extend_end_while_voiced(tr, 1.0, 1.40) == pytest.approx(1.05, abs=0.011)
     tr = _voiced_track(0.5, 2.0, voiced_until=0.8)
     assert extend_end_while_voiced(tr, 1.0, 1.40) == 1.0
+
+
+from pipeline.build_song import ctc_syllable_spans  # noqa: E402
+
+
+def test_ctc_syllable_spans_use_measured_starts():
+    spans = ctc_syllable_spans([1.02, 1.30, 1.55], 3, 1.00, 2.00)
+    assert spans == [(1.00, 1.30), (1.30, 1.55), (1.55, 2.00)]
+
+
+def test_ctc_syllable_spans_reject_untrustworthy_input():
+    assert ctc_syllable_spans(None, 2, 1.0, 2.0) is None
+    assert ctc_syllable_spans([1.0, 1.5], 3, 1.0, 2.0) is None      # wrong count
+    assert ctc_syllable_spans([1.0, 1.99], 2, 1.0, 2.0) is None     # last one too short
+    assert ctc_syllable_spans([1.0, 2.5], 2, 1.0, 2.0) is None      # outside the word
+    assert ctc_syllable_spans([1.0], 1, 1.0, 2.0) is None           # single syllable

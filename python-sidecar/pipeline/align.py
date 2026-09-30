@@ -112,6 +112,9 @@ class WordTiming:
     # constantes SOURCE_* acima. Diagnóstico/revisão manual futura.
     singer: int = 0  # 0 = solo/sem tag; 1 = P1; 2 = P2; 3 = ambos. Vem da
     # tag P1:/P2:/P1&P2: no início da linha da letra (só usado em modo dueto).
+    syllable_starts: list[float] | None = None  # início MEDIDO de cada sílaba
+    # (alinhamento CTC por letra, ctc_align.attach_syllable_starts). None = o
+    # build_song divide a palavra como antes (energia/pitch).
 
 
 # Tag de cantor no INÍCIO de uma linha da letra, para duetos: "P1:", "P2:",

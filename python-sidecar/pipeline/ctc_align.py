@@ -145,6 +145,43 @@ def spans_to_word_times(
     return out
 
 
+def word_token_times(
+    token_spans: list[tuple[int, int, float]],
+    ranges: list[tuple[int, int]],
+    frame_s: float,
+) -> list[list[tuple[float, float]]]:
+    """(ini_s, fim_s) de cada letra alinhada, agrupadas por palavra."""
+    return [[(sp[0] * frame_s, sp[1] * frame_s) for sp in token_spans[a:b]] for a, b in ranges]
+
+
+def syllable_starts(
+    syllables: list[str],
+    token_times: list[tuple[float, float]],
+    dictionary: dict[str, int],
+    language: str,
+) -> list[float] | None:
+    """
+    Início de cada sílaba = instante em que o CTC alinhou a 1ª letra dela.
+    As letras de cada sílaba são contadas com a MESMA tokenização da palavra
+    (tokenize_words), então a soma tem que bater com as letras alinhadas da
+    palavra; se não bater (número por extenso, hífen, etc.), ou alguma sílaba
+    ficar sem letra, devolve None e quem chama fica com a divisão de antes.
+    """
+    if len(syllables) < 2:
+        return None
+    per_syl, _ = tokenize_words(syllables, dictionary, language)
+    counts = [len(t) for t in per_syl]
+    if 0 in counts or sum(counts) != len(token_times):
+        return None
+    starts, k = [], 0
+    for c in counts:
+        starts.append(token_times[k][0])
+        k += c
+    if any(b <= a for a, b in zip(starts, starts[1:])):
+        return None
+    return starts
+
+
 def fill_missing(times: list[tuple[float, float, float] | None]) -> list[tuple[float, float, float, bool]]:
     """Palavras sem token herdam um ponto entre as vizinhas medidas (duração
     zero-ish). Devolve (start, end, score, medido)."""
@@ -358,14 +395,17 @@ def plan_blocks(
 
 
 def _align_block(emissions, frame_s, t0, t1, word_tokens, line_ends, star_id, blank):
-    """Alinha um bloco de palavras dentro de [t0, t1). None se não cabe."""
+    """
+    Alinha um bloco de palavras dentro de [t0, t1). Devolve (tempos por
+    palavra, tempos das letras por palavra), ou None se não cabe.
+    """
     targets, ranges = build_targets(word_tokens, line_ends, star_id)
     if not ranges:
-        return []
+        return [], []
     f0 = max(0, int(t0 / frame_s))
     f1 = min(emissions.shape[0], int(np.ceil(t1 / frame_s)))
     if not targets:
-        return [None] * len(ranges)
+        return [None] * len(ranges), [[] for _ in ranges]
     repeats = sum(1 for a, b in zip(targets, targets[1:]) if a == b)
     if f1 - f0 < len(targets) + repeats:
         return None
@@ -373,21 +413,22 @@ def _align_block(emissions, frame_s, t0, t1, word_tokens, line_ends, star_id, bl
     if len(spans) != len(targets):
         return None
     shifted = [(s + f0, e + f0, sc) for s, e, sc in spans]
-    return spans_to_word_times(shifted, ranges, frame_s)
+    return spans_to_word_times(shifted, ranges, frame_s), word_token_times(shifted, ranges, frame_s)
 
 
 def align_blocks(
     emissions, frame_s: float, blocks: list[tuple[int, int, float, float]],
     word_tokens: list[list[int]], line_ends: list[bool],
-    star_id: int | None, blank: int,
-) -> list[tuple[float, float, float] | None]:
+    star_id: int | None, blank: int, return_tokens: bool = False,
+):
     """
     Alinha cada bloco na sua janela. Bloco que não cabe na janela (mais
     tokens que quadros) é fundido com o vizinho e tentado de novo - no limite
-    vira o alinhamento global de antes.
+    vira o alinhamento global de antes. Com `return_tokens`, devolve também
+    os tempos das letras de cada palavra (ver word_token_times).
     """
     blocks = list(blocks)
-    results: list[list] = []
+    results: list[tuple[list, list]] = []
     k = 0
     while k < len(blocks):
         i0, i1, t0, t1 = blocks[k]
@@ -406,8 +447,13 @@ def align_blocks(
             results.pop()
             k -= 1
         else:
-            return [None] * (i1 - i0)  # nem o global coube
-    return [t for r in results for t in r]
+            # nem o global coube
+            empty = [None] * (i1 - i0)
+            return (empty, [[] for _ in empty]) if return_tokens else empty
+    times = [t for r, _ in results for t in r]
+    if return_tokens:
+        return times, [tt for _, r in results for tt in r]
+    return times
 
 
 def align_lyrics_ctc(
@@ -583,12 +629,31 @@ def align_lyrics_ctc_to_audio(
 
     em, frame_s = compute_emissions(model, audio, device)
     em[:, star_id] = STAR_LOGP
-    times = align_blocks(em, frame_s, blocks, word_tokens, line_ends, star_id, dictionary["-"])
+    times, token_times = align_blocks(em, frame_s, blocks, word_tokens, line_ends, star_id,
+                                      dictionary["-"], return_tokens=True)
     if all(t is None for t in times):
         return None
     timings = to_word_timings(words, line_ends, singers, fill_missing(times))
+    attach_syllable_starts(timings, token_times, dictionary, language)
     flag_low_confidence_lines(timings)
     return timings
+
+
+def attach_syllable_starts(timings: list, token_times: list, dictionary: dict[str, int],
+                           language: str) -> int:
+    """
+    Preenche WordTiming.syllable_starts a partir das letras alinhadas, com a
+    MESMA divisão silábica do build_song (split_word_syllables sem as sílabas
+    só de pontuação). Devolve quantas palavras receberam.
+    """
+    from .syllabify import split_word_syllables
+
+    n = 0
+    for wt, tt in zip(timings, token_times):
+        syls = [x for x in split_word_syllables(wt.word) if any(c.isalnum() for c in x)]
+        wt.syllable_starts = syllable_starts(syls, tt, dictionary, language) if tt else None
+        n += wt.syllable_starts is not None
+    return n
 
 
 def to_word_timings(words, line_ends, singers, res):

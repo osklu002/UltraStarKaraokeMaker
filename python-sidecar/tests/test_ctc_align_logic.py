@@ -193,3 +193,17 @@ def test_flag_low_confidence_lines_marks_whole_lines():
     assert flag_low_confidence_lines(ts, threshold=0.1) == 2
     assert [w.source for w in ts] == ["ctc", "ctc", "ctc_low", "ctc_low", "interpolated", "ctc"]
     assert low_confidence_frac(ts) == pytest.approx(3 / 6)
+
+
+def test_syllable_starts_from_letter_times():
+    from pipeline.ctc_align import syllable_starts
+    # "cabo" -> ["ca", "bo"]: letters c a b o
+    tt = [(1.00, 1.02), (1.05, 1.20), (1.30, 1.32), (1.35, 1.50)]
+    assert syllable_starts(["ca", "bo"], tt, DICT, "pt") == [1.00, 1.30]
+
+
+def test_syllable_starts_give_up_when_letters_dont_add_up():
+    from pipeline.ctc_align import syllable_starts
+    tt = [(1.0, 1.1), (1.2, 1.3), (1.4, 1.5)]
+    assert syllable_starts(["ca", "bo"], tt, DICT, "pt") is None     # 4 letters vs 3 spans
+    assert syllable_starts(["cabo"], tt, DICT, "pt") is None         # single syllable

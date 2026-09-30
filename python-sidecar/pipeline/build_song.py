@@ -279,6 +279,32 @@ def extend_end_while_voiced(track: PitchTrack, word_end: float, limit: float) ->
     return max(word_end, min(new_end, limit))
 
 
+# Duração mínima de uma sílaba vinda do alinhamento por letra do CTC; abaixo
+# disso a divisão medida é tratada como suspeita e cai na de energia/pitch.
+CTC_SYLLABLE_MIN_S = 0.03
+
+
+def ctc_syllable_spans(
+    starts: list[float] | None,
+    num_syllables: int,
+    word_start: float,
+    word_end: float,
+) -> list[tuple[float, float]] | None:
+    """
+    Trechos das sílabas a partir dos inícios MEDIDOS pelo CTC (1ª letra de
+    cada sílaba, WordTiming.syllable_starts). A 1ª sílaba começa no início da
+    palavra e a última vai até o fim dela. None quando não dá pra confiar
+    (contagem diferente, fora da palavra, sílaba curta demais) - aí vale a
+    divisão por energia/pitch de allocate_syllable_durations.
+    """
+    if not starts or len(starts) != num_syllables or num_syllables < 2:
+        return None
+    bounds = [word_start] + list(starts[1:]) + [word_end]
+    if any(b - a < CTC_SYLLABLE_MIN_S for a, b in zip(bounds, bounds[1:])):
+        return None
+    return [(bounds[i], bounds[i + 1]) for i in range(num_syllables)]
+
+
 def merge_flat_continuations(
     notes: list[Note],
     phrase_breaks: list[int],
@@ -711,7 +737,10 @@ def build_notes(
             # cauda entrasse no melisma, a queda de tom do fim da nota virava
             # mais "~": medido, 7,2% -> 9,3% de "~" nas mesmas 16 músicas.
             sustained_end = extend_end_while_voiced(track, word_end, limit) if limit is not None else word_end
-            syllable_spans = allocate_syllable_durations(track, len(syllables), word_start, word_end)
+            syllable_spans = (
+                ctc_syllable_spans(wt.syllable_starts, len(syllables), word_start, word_end)
+                or allocate_syllable_durations(track, len(syllables), word_start, word_end)
+            )
 
             for i, (syl, (syl_start, syl_end)) in enumerate(zip(syllables, syllable_spans)):
                 is_last_syllable_of_word = (i == len(syllables) - 1)
