@@ -6,6 +6,15 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Opção "Cookies do YouTube", para vídeos que o YouTube só libera para quem está logado.** Alguns vídeos agora falham com "Sign in to confirm you're not a bot", faça o app o que fizer. Escolha o navegador em que você está logado no YouTube (Firefox, Chrome, Chromium, Brave ou Edge) e os downloads e a leitura dos dados do vídeo passam a usar os cookies do YouTube dele. Desligada por padrão.
+
+### Corrigido
+
+- **"Não consegui ler os dados do vídeo" nunca dizia o motivo.** A leitura engolia qualquer erro. Agora avisa quando o YouTube pede login (e sugere ligar a opção de cookies) ou quando não deu para ler os cookies do navegador.
+- **No Linux, o Deno que o setup instala nunca era usado.** O yt-dlp precisa de um runtime JavaScript para o YouTube, e sem ele o YouTube recusa mais pedidos. O setup põe o Deno na pasta `bin` do app, mas essa pasta só entrava no `PATH` junto com um ffmpeg embutido, que no Linux normalmente não existe. Agora ela entra sempre que existe.
+
 ## [0.23.2] - 2026-10-01 (contribuição [@osklu002](https://github.com/osklu002))
 
 ### Corrigido

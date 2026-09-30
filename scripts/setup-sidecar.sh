@@ -417,12 +417,10 @@ fi
 # Se já houver `deno` no PATH, não baixamos nada. Senão vai para
 # <pasta de dados>/bin, como no Windows.
 #
-# LIMITAÇÃO CONHECIDA NO LINUX: o sidecar só põe essa pasta bin no PATH
-# quando existe o ffmpeg EMBUTIDO (ensure_ffmpeg_on_path em
-# pipeline/proc_utils.py depende de USKMAKER_FFMPEG). No Linux o ffmpeg
-# normalmente vem da distro, então o deno daqui só é achado pelo yt-dlp
-# depois que o sidecar passar a expor a pasta bin independentemente do
-# ffmpeg. Quem já tem `deno` no PATH não é afetado.
+# O sidecar põe essa pasta bin no PATH sempre que ela existe
+# (ensure_ffmpeg_on_path em pipeline/proc_utils.py), com ou sem ffmpeg
+# embutido - até 01/10/2026 só com ele, e no Linux o deno daqui não era
+# achado. Quem já tem `deno` no PATH não é afetado.
 #
 # NÃO é fatal: sem ele os downloads seguem exatamente como hoje.
 step "Setting up Deno (the JavaScript runtime yt-dlp uses for YouTube)"

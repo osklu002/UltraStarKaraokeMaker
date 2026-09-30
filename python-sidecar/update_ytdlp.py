@@ -85,23 +85,9 @@ def build_upgrade_command(uv_exe: str, python_exe: str, prerelease: bool) -> lis
     return cmd
 
 
-def data_dir(env=None, windows: bool | None = None) -> Path | None:
-    """Pasta de dados do USKMaker - espelho do platform::data_dir do Rust.
-
-    Windows: %LOCALAPPDATA%\\USKMaker. Linux/macOS: $XDG_DATA_HOME/USKMaker
-    (só caminho absoluto, como manda a especificação XDG) ou
-    ~/.local/share/USKMaker. `env`/`windows` existem só para os testes.
-    """
-    env = os.environ if env is None else env
-    windows = (os.name == "nt") if windows is None else windows
-    if windows:
-        base = env.get("LOCALAPPDATA")
-        return Path(base) / "USKMaker" if base else None
-    xdg = env.get("XDG_DATA_HOME")
-    if xdg and xdg.startswith("/"):  # XDG é POSIX: absoluto = começa com /
-        return Path(xdg) / "USKMaker"
-    home = env.get("HOME")
-    return Path(home) / ".local" / "share" / "USKMaker" if home else None
+# data_dir mora em pipeline/proc_utils.py (o sidecar também precisa dela, pra
+# pôr a pasta bin no PATH); fica importada aqui com o mesmo nome.
+from pipeline.proc_utils import data_dir  # noqa: E402
 
 
 def find_uv() -> str | None:

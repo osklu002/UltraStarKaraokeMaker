@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .i18n import t
-from .proc_utils import ffmpeg_exe, run_subprocess
+from .proc_utils import ffmpeg_exe, run_subprocess, yt_cookies_browser
 
 # Quantas vezes tentar de novo quando o YouTube recusa de forma TRANSITÓRIA.
 # 403 no meio do download é um modo de falha conhecido e INTERMITENTE do lado
@@ -153,6 +153,11 @@ def _yt_dlp_base_cmd() -> list[str]:
     ff = os.environ.get("USKMAKER_FFMPEG")
     if ff:
         base += ["--ffmpeg-location", ff]
+    # Cookies do navegador escolhido na interface - para vídeo em que o YouTube
+    # exige sessão logada ("confirm you're not a bot"). Ver yt_cookies_browser.
+    browser = yt_cookies_browser()
+    if browser:
+        base += ["--cookies-from-browser", browser]
     return base
 
 
@@ -190,9 +195,6 @@ def download_from_youtube(url: str, out_dir: Path) -> Path:
         "-o", output_template,
         url,
     ]
-
-    # NOTA: se o YouTube pedir autenticação (idade/região), gere um cookies.txt
-    # e adicione "--cookies", "cookies.txt" na lista acima.
 
     run_yt_dlp(cmd, t("download.what_audio"))
 

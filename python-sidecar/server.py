@@ -18,7 +18,7 @@ PROTOCOLO
 #      "keep_harmonies":...,
      "mp4_export":..., "romanize":...,
      "synced_lyrics_path":..., "audio_format":..., "max_video_resolution":...,
-     "aligner":...,
+     "aligner":..., "yt_cookies_browser":...,
      "ui_lang":...}
     {"cmd":"shutdown"}  -> encerra o servidor.
 
@@ -101,6 +101,15 @@ def _run_one(job: dict) -> None:
         status_path.unlink()
     except FileNotFoundError:
         pass
+
+    # Cookies do YouTube (configuração da interface) - POR JOB, porque o
+    # servidor é persistente e o usuário pode mudar a opção entre músicas da
+    # fila. O download (pipeline/download.py) lê a env via yt_cookies_browser.
+    browser = (job.get("yt_cookies_browser") or "").strip()
+    if browser:
+        os.environ["USKMAKER_YT_COOKIES_BROWSER"] = browser
+    else:
+        os.environ.pop("USKMAKER_YT_COOKIES_BROWSER", None)
 
     # buffering=1 = line-buffered: o Rust vê cada linha do log assim que sai.
     with open(log_path, "w", encoding="utf-8", buffering=1) as f:

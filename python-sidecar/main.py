@@ -56,7 +56,7 @@ from pipeline.download import download_background_video, get_source_audio
 from pipeline.filenames import sanitize_filename
 from pipeline.i18n import SUPPORTED_LANGS, set_ui_lang, t
 from pipeline.metadata import fetch_metadata
-from pipeline.proc_utils import ensure_ffmpeg_on_path, ffmpeg_exe, run_subprocess
+from pipeline.proc_utils import YT_COOKIE_BROWSERS, ensure_ffmpeg_on_path, ffmpeg_exe, run_subprocess
 from pipeline.separate import isolate_backing_vocals, isolate_lead_vocal, separate_vocals
 from pipeline.video_export import export_karaoke_video, ffmpeg_has_libass
 
@@ -1277,6 +1277,9 @@ if __name__ == "__main__":
     parser.add_argument("--whisper-model", default="auto",
                         choices=["auto", "medium", "large-v3", "large-v2", "small"],
                         help="Modelo de reconhecimento do alinhamento. auto = large-v3 em GPU NVIDIA com VRAM sobrando, senão medium (GPU AMD: medium)")
+    parser.add_argument("--yt-cookies-browser", default="", choices=["", *YT_COOKIE_BROWSERS],
+                        help="Lê os cookies do YouTube deste navegador (para vídeo em que o YouTube pede "
+                             "\"confirm you're not a bot\" ou login). Vazio = desligado")
     parser.add_argument("--aligner", default=DEFAULT_ALIGNER, choices=list(ALIGNERS),
                         help="Alinhador letra<->áudio: ctc = letra inteira de uma vez (padrão; cai no whisper "
                              "se a letra tiver outro alfabeto), whisper = transcrição livre + âncoras (o de antes)")
@@ -1296,6 +1299,9 @@ if __name__ == "__main__":
     parser.add_argument("--ui-lang", default="pt", choices=list(SUPPORTED_LANGS),
                         help="Idioma das mensagens do log (pt/en)")
     args = parser.parse_args()
+    if args.yt_cookies_browser:
+        # mesmo caminho do servidor: o download lê a env (proc_utils.yt_cookies_browser)
+        os.environ["USKMAKER_YT_COOKIES_BROWSER"] = args.yt_cookies_browser
     set_ui_lang(args.ui_lang)
 
     try:
