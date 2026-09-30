@@ -1182,22 +1182,37 @@ function App() {
     await processQueue(full);
   }
 
-  // Gera de novo a última música, reusando o mesmo input (sem redigitar).
+  // "Gerar de novo": devolve a última música ao FORMULÁRIO (link/arquivo,
+  // letra, título, artista, idioma...) e sobe a tela, em vez de reenfileirar
+  // na hora. Antes reusava o input inteiro da geração anterior, OPÇÕES
+  // incluídas, sem mostrar o formulário - quem queria trocar uma opção (ex.:
+  // ligar os cookies do YouTube) mudava a caixa e o regerar a ignorava. As
+  // opções são as que estão na tela agora; o usuário confere e aperta Gerar
+  // (que também faz a confirmação de sobrescrever o pacote).
   // Útil quando a separação do vocal saiu ruim: cada tentativa varia, e a
   // próxima costuma sair melhor. (Para acertar TRECHOS, a Revisão é melhor -
   // ela não re-separa; ver o texto do botão de revisão.)
-  async function regenerate() {
+  function regenerate() {
     if (isRunning || !lastGen) return;
-    const item: QueueItem = {
-      id: nextIdRef.current++,
-      artist: lastGen.artist,
-      title: lastGen.title,
-      input: lastGen.input,
-      status: "pending",
+    const i = lastGen.input as {
+      youtubeUrl?: string | null; filePath?: string | null; lyricsText?: string;
+      syncedLyrics?: string | null; language?: string; bpm?: number | null;
+      transpose?: number; bgVideoUrl?: string | null;
     };
-    if (!(await confirmOverwrite([item]))) return;
-    setQueue((q) => [...q, item]);
-    await processQueue([item]);
+    setSourceMode(i.youtubeUrl ? "youtube" : "file");
+    setYoutubeUrl(i.youtubeUrl ?? "");
+    setFilePath(i.filePath ?? "");
+    setLyricsText(i.lyricsText ?? "");
+    setSyncedLyrics(i.syncedLyrics ?? null);
+    setTitle(lastGen.title);
+    setArtist(lastGen.artist);
+    if (i.language) setLanguage(i.language);
+    setBpm(i.bpm != null ? String(i.bpm) : "");
+    setTranspose(String(i.transpose ?? 0));
+    setBgVideoUrl(i.bgVideoUrl ?? "");
+    setResult(null);
+    setLyricsSearchMsg({ kind: "ok", text: t("regenFormReady") });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function handleCancel() {
@@ -1557,7 +1572,7 @@ function App() {
             onClick={fetchVideoInfo}
             disabled={isRunning || fetchingInfo || !youtubeUrl.trim()}
           >
-            {fetchingInfo ? t("fetchInfoRunning") : t("fetchInfoButton")}
+            {fetchingInfo ? <><span className="spinner" /> {t("fetchInfoRunning")}</> : t("fetchInfoButton")}
           </button>
           <label className="checkbox-line" title={t("withVideoTip")}>
             <input
@@ -1650,7 +1665,7 @@ function App() {
             <span className={`lyrics-status ${lyricsSearchMsg.kind}`}>{lyricsSearchMsg.text}</span>
           )}
           <button className="mini-button" onClick={searchLyrics} disabled={isRunning || lyricsSearching}>
-            {lyricsSearching ? t("searchingLyrics") : t("searchLyrics")}
+            {lyricsSearching ? <><span className="spinner" /> {t("searchingLyrics")}</> : t("searchLyrics")}
           </button>
         </div>
         <textarea

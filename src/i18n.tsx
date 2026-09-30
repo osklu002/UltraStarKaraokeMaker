@@ -237,7 +237,8 @@ const STRINGS = {
     resultReviewHint: "É a melhor forma de acertar trechos: você ajusta as notas sem gerar de novo, então conserta só o pedaço ruim sem mexer no que ficou bom.",
     resultOpenFolder: "Abrir pasta",
     resultRegen: "Gerar de novo",
-    resultRegenHint: "Gera esta mesma música outra vez, sem redigitar. A separação do vocal varia a cada tentativa — se saiu ruim, a próxima costuma melhorar. Para acertar trechos, prefira Revisar.",
+    resultRegenHint: "Volta esta música para o formulário, já preenchida, para você conferir as opções e gerar de novo. A separação da voz varia a cada tentativa — se saiu ruim, a próxima costuma melhorar. Para acertar trechos, prefira a Revisão.",
+    regenFormReady: "Formulário preenchido com a última música — confira as opções e aperte Gerar.",
     resultNewSong: "Nova música",
 
     // ---- revisão ----
@@ -565,7 +566,8 @@ const STRINGS = {
     resultReviewHint: "This is the best way to fix specific parts: you adjust the notes without generating again, so you fix only the bad bit without touching what came out good.",
     resultOpenFolder: "Open folder",
     resultRegen: "Generate again",
-    resultRegenHint: "Generates this same song again, without retyping. Vocal separation varies each attempt — if it came out bad, the next one usually improves. To fix specific parts, prefer Review.",
+    resultRegenHint: "Puts this song back into the form, filled in, so you can check the options and generate again. Vocal separation varies each attempt — if it came out bad, the next one usually improves. To fix specific parts, prefer Review.",
+    regenFormReady: "Form filled in with the last song — check the options and press Generate.",
     resultNewSong: "New song",
 
     revTitle: "Review",
