@@ -48,6 +48,9 @@ interface PipelineResult {
   notesTotal: number;
   notesEstimated: number;
   notesWhisperAnchored: number;
+  // Alinhamento CTC global (ctc_align.py). Ausentes em executável antigo.
+  notesCtc?: number;
+  notesCtcLow?: number;
 }
 
 // Análise de assets de um pacote na tela de revisão (comando Rust analyze_package).
@@ -1997,12 +2000,25 @@ function App() {
                 ancorado, mas fora de sincronia". Só mostra se o aviso forte
                 acima NÃO disparou (senão seria redundante). Ver
                 WHISPER_RECALL_FLOOR no main.py. */}
+            {/* Com o alinhamento CTC não existe âncora do Whisper - o aviso
+                de word-recall não se aplica; o equivalente é a fração de notas
+                em linha de confiança baixa (CTC_WARN_PCT no main.py). */}
             {result.notesTotal > 0 &&
+              !result.notesCtc &&
               result.notesEstimated / result.notesTotal <= 0.5 &&
               result.notesWhisperAnchored / result.notesTotal < 0.6 && (
                 <div className="result-warning-banner">
                   ⚠ {t("resultLowRecall", {
                     pct: Math.round((100 * result.notesWhisperAnchored) / result.notesTotal),
+                  })}
+                </div>
+              )}
+            {result.notesTotal > 0 &&
+              !!result.notesCtc &&
+              (result.notesCtcLow ?? 0) / result.notesTotal > 0.1 && (
+                <div className="result-warning-banner">
+                  ⚠ {t("resultCtcLow", {
+                    pct: Math.round((100 * (result.notesCtcLow ?? 0)) / result.notesTotal),
                   })}
                 </div>
               )}

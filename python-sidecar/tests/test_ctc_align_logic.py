@@ -136,3 +136,60 @@ def test_snap_line_starts_only_moves_line_first_words_within_reach():
     moved = snap_line_starts(starts, ends, line_ends, onsets)
     assert moved == 2
     assert starts == [0.90, 1.50, 3.12, 6.00]  # 1.45 is mid-line; 5.50 too far
+
+
+def _peaky(T, C, peaks):
+    """log-probs [T, C]: blank everywhere except the given {frame: token}."""
+    import numpy as np
+    lp = np.full((T, C), -10.0, dtype=np.float32)
+    lp[:, 0] = -0.01
+    for f, tok in peaks.items():
+        lp[f] = -10.0
+        lp[f, tok] = -0.01
+    return lp
+
+
+def test_viterbi_repeated_token_needs_a_blank_between():
+    from pipeline.ctc_align import ctc_viterbi
+    lp = _peaky(8, 3, {2: 1, 5: 1})  # "a a" -> two separate spans
+    spans = ctc_viterbi(lp, [1, 1], blank=0)
+    assert [(s, e) for s, e, _ in spans] == [(2, 3), (5, 6)]
+
+
+def test_viterbi_matches_torchaudio_on_random_emissions():
+    import numpy as np
+    torch = pytest.importorskip("torch")
+    F = pytest.importorskip("torchaudio.functional")
+    from pipeline.ctc_align import ctc_viterbi
+    rng = np.random.default_rng(0)
+    lp = torch.log_softmax(torch.from_numpy(rng.normal(size=(120, 6)).astype(np.float32)), -1)
+    targets = [1, 2, 2, 3, 5, 4, 4, 1]
+    labels, scores = F.forced_align(lp.unsqueeze(0), torch.tensor([targets], dtype=torch.int32), blank=0)
+    ref = [(s.start, s.end) for s in F.merge_tokens(labels[0], scores[0].exp(), blank=0)]
+    assert [(s, e) for s, e, _ in ctc_viterbi(lp.numpy(), targets, blank=0)] == ref
+
+
+def test_lrc_blocks_bound_each_line_by_the_next_start():
+    from pipeline.ctc_align import lrc_blocks
+    blocks = lrc_blocks(10, [(0, 5.0), (4, 12.0), (7, 20.0)], audio_dur=60.0, pad=0.3)
+    assert blocks == [(0, 4, 4.7, 12.3), (4, 7, 11.7, 20.3), (7, 10, 19.7, 60.0)]
+
+
+def test_lrc_blocks_unmatched_head_and_backwards_times():
+    from pipeline.ctc_align import lrc_blocks
+    blocks = lrc_blocks(10, [(3, 8.0), (6, 4.0)], audio_dur=30.0, pad=0.3)
+    assert blocks == [(0, 3, 0.0, 8.3), (3, 10, 7.7, 30.0)]  # (6, 4.0) goes back: dropped
+    assert lrc_blocks(5, [], audio_dur=9.0) == [(0, 5, 0.0, 9.0)]
+
+
+def _wt(score, line_end=False, source="ctc"):
+    from pipeline.align import WordTiming
+    return WordTiming(word="w", start=0.0, end=0.1, score=score, is_line_end=line_end, source=source)
+
+
+def test_flag_low_confidence_lines_marks_whole_lines():
+    from pipeline.ctc_align import flag_low_confidence_lines, low_confidence_frac
+    ts = [_wt(0.5), _wt(0.4, True), _wt(0.05), _wt(0.02, True), _wt(0.01, source="interpolated"), _wt(0.3, True)]
+    assert flag_low_confidence_lines(ts, threshold=0.1) == 2
+    assert [w.source for w in ts] == ["ctc", "ctc", "ctc_low", "ctc_low", "interpolated", "ctc"]
+    assert low_confidence_frac(ts) == pytest.approx(3 / 6)

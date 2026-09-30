@@ -29,9 +29,15 @@ from pathlib import Path
 
 import numpy as np
 
+from .align import SOURCE_CTC, SOURCE_CTC_LOW
 from .numerals import expand_numeral
 
-SOURCE_CTC = "ctc"  # forced alignment global (medido)
+# Linha cuja média de score CTC das palavras fica abaixo disto é marcada
+# SOURCE_CTC_LOW. MEDIDO (30/09/2026, 8 músicas, 407 linhas, 40 com erro
+# mediano > 1 s): < 0,10 marca 20% das linhas e pega 85% das erradas
+# (precisão 0,41 contra 10% de base). Abaixo disso a cobertura cai rápido
+# (0,05: pega 47%); acima, marca linha boa demais (0,20: 33% das linhas).
+LOW_LINE_SCORE = 0.10
 
 SAMPLE_RATE = 16000
 
@@ -210,15 +216,64 @@ def compute_emissions(
     return emissions, (stride or 320.0) / SAMPLE_RATE
 
 
-def forced_align_spans(emissions, targets: list[int], blank: int = 0) -> list[tuple[int, int, float]]:
-    """Viterbi global; um (ini, fim, score) por token alvo, em quadros."""
-    import torch
-    import torchaudio.functional as F
+def ctc_viterbi(log_probs: np.ndarray, targets: list[int], blank: int = 0) -> list[tuple[int, int, float]]:
+    """
+    Forced alignment CTC (Viterbi) sobre `log_probs` [T, C]: o caminho mais
+    provável que emite exatamente `targets`, com blanks opcionais entre eles.
+    Devolve um (ini_quadro, fim_quadro, score) por token alvo; score = média
+    da probabilidade do token nos quadros dele (mesmo contrato do
+    torchaudio.functional.merge_tokens).
 
-    tgt = torch.tensor([targets], dtype=torch.int32)
-    labels, scores = F.forced_align(emissions.unsqueeze(0), tgt, blank=blank)
-    spans = F.merge_tokens(labels[0], scores[0].exp(), blank=blank)
-    return [(sp.start, sp.end, float(sp.score)) for sp in spans]
+    Implementação própria em vez do torchaudio.functional.forced_align: ele
+    foi descontinuado e SAI no torchaudio 2.9 (aviso do próprio torchaudio
+    2.8). Estados = alvo intercalado com blanks (2L+1); a cada quadro um
+    estado vem de si mesmo, do anterior, ou de dois antes quando pula um
+    blank entre tokens diferentes.
+    """
+    lp = np.asarray(log_probs, dtype=np.float32)
+    T = lp.shape[0]
+    L = len(targets)
+    S = 2 * L + 1
+    ext = np.full(S, blank, dtype=np.int64)
+    ext[1::2] = targets
+    # pular o blank só entre tokens diferentes (repetido exige blank no meio)
+    can_skip = np.zeros(S, dtype=bool)
+    can_skip[3::2] = ext[3::2] != ext[1:-2:2]
+
+    neg = np.float32(-1e30)
+    score = np.full(S, neg, dtype=np.float32)
+    score[0] = lp[0, blank]
+    if S > 1:
+        score[1] = lp[0, ext[1]]
+    back = np.zeros((T, S), dtype=np.int8)  # 0 = fica, 1 = veio de s-1, 2 = de s-2
+    for t in range(1, T):
+        stay = score
+        step = np.concatenate(([neg], score[:-1]))
+        skip = np.where(can_skip, np.concatenate(([neg, neg], score[:-2])), neg)
+        best = np.maximum(stay, np.maximum(step, skip))
+        back[t] = np.where(best == stay, 0, np.where(best == step, 1, 2))
+        score = best + lp[t, ext]
+
+    s_ = int(S - 1 if S == 1 or score[S - 1] >= score[S - 2] else S - 2)
+    path = np.empty(T, dtype=np.int64)
+    for t in range(T - 1, -1, -1):
+        path[t] = s_
+        s_ -= int(back[t, s_])
+
+    spans: list[tuple[int, int, float]] = []
+    probs = np.exp(lp[np.arange(T), ext[path]])
+    for j in range(L):
+        frames = np.nonzero(path == 2 * j + 1)[0]
+        if frames.size == 0:  # não acontece com caminho válido
+            return []
+        spans.append((int(frames[0]), int(frames[-1]) + 1, float(probs[frames].mean())))
+    return spans
+
+
+def forced_align_spans(emissions, targets: list[int], blank: int = 0) -> list[tuple[int, int, float]]:
+    """Viterbi; um (ini, fim, score) por token alvo, em quadros."""
+    em = emissions.numpy() if hasattr(emissions, "numpy") else emissions
+    return ctc_viterbi(em, targets, blank=blank)
 
 
 def _occurrences(seq: list[str], hay: list[str]) -> int:
@@ -421,6 +476,119 @@ def snap_line_starts(
             ends[k] = max(ends[k], starts[k] + 0.02)
             moved += 1
     return moved
+
+
+def lrc_blocks(
+    n_words: int,
+    line_starts: list[tuple[int, float]],
+    audio_dur: float,
+    pad: float = 0.3,
+) -> list[tuple[int, int, float, float]]:
+    """
+    Blocos (i0, i1, t0, t1) a partir dos inícios de linha de um .lrc APROVADO
+    pelo usuário: `line_starts` = (índice da 1ª palavra da linha, tempo),
+    casados via align.match_lrc_to_lines. Cada bloco vai do início de uma
+    linha casada até o início da próxima (com `pad` de folga), então o CTC não
+    pode tirar uma linha do lugar que o usuário conferiu de ouvido. Tempos que
+    voltam no tempo são descartados.
+    """
+    starts: list[tuple[int, float]] = []
+    for i, t in sorted(line_starts):
+        if 0 < i < n_words and (not starts or t > starts[-1][1]):
+            starts.append((i, t))
+        elif i == 0 and not starts:
+            starts.append((0, t))
+    if not starts:
+        return [(0, n_words, 0.0, audio_dur)]
+    blocks: list[tuple[int, int, float, float]] = []
+    if starts[0][0] > 0:
+        blocks.append((0, starts[0][0], 0.0, starts[0][1] + pad))
+    for k, (i, t) in enumerate(starts):
+        nxt_i, nxt_t = starts[k + 1] if k + 1 < len(starts) else (n_words, audio_dur)
+        blocks.append((i, nxt_i, max(0.0, t - pad), min(audio_dur, nxt_t + pad)))
+    return blocks
+
+
+def flag_low_confidence_lines(timings: list, threshold: float = LOW_LINE_SCORE) -> int:
+    """
+    Marca SOURCE_CTC_LOW nas palavras de linhas (pelo is_line_end) cuja média
+    de score fica abaixo de `threshold`. Só mexe em palavras SOURCE_CTC.
+    Devolve quantas palavras foram marcadas.
+    """
+    flagged = 0
+    line: list = []
+    for k, wt in enumerate(timings):
+        line.append(wt)
+        if wt.is_line_end or k == len(timings) - 1:
+            ctc = [w for w in line if w.source == SOURCE_CTC]
+            if ctc and sum(w.score for w in line) / len(line) < threshold:
+                for w in ctc:
+                    w.source = SOURCE_CTC_LOW
+                    flagged += 1
+            line = []
+    return flagged
+
+
+def low_confidence_frac(timings: list) -> float:
+    """Fração das palavras em linha de confiança baixa (ou não medidas)."""
+    from .align import SOURCE_INTERPOLATED
+    bad = sum(1 for w in timings if w.source in (SOURCE_CTC_LOW, SOURCE_INTERPOLATED))
+    return bad / max(len(timings), 1)
+
+
+def align_lyrics_ctc_to_audio(
+    vocals_wav: Path,
+    lyrics_path: Path,
+    language: str,
+    device: str = "cuda",
+    synced_lyrics_path: Path | None = None,
+):
+    """
+    Ponto de entrada do app (main.py, Etapa 4): list[WordTiming] alinhada por
+    CTC global, com linhas de confiança baixa marcadas SOURCE_CTC_LOW. None se
+    a letra não cabe no vocabulário do modelo (outro alfabeto) - o chamador
+    cai no align.align_lyrics_to_audio de sempre.
+
+    Um .lrc só é usado se APROVADO pelo usuário ([uskmapproved:1]): os inícios
+    de linha dele viram limites de bloco (ver lrc_blocks). Um .lrc não
+    aprovado fica de fora: no caminho do Whisper ele servia pra preencher os
+    vãos que o Whisper não ouviu, e aqui não existe vão - toda palavra é
+    medida. (Ele ainda aparece na tela de revisão, que compara linha a linha.)
+    """
+    import whisperx
+
+    from . import align as A
+    from .i18n import t as _t
+
+    audio = whisperx.load_audio(str(vocals_wav))
+    words, line_ends, singers = A._load_lyrics_words_with_line_ends(lyrics_path)
+    if not words:
+        return None
+    model, dictionary = _get_mms_model(device)
+    word_tokens, unmapped = tokenize_words(words, dictionary, language)
+    if unmapped > MAX_UNMAPPED_FRAC:
+        return None
+    star_id = dictionary["*"]
+    audio_dur = len(audio) / SAMPLE_RATE
+
+    blocks = [(0, len(words), 0.0, audio_dur)]
+    if synced_lyrics_path is not None and Path(synced_lyrics_path).exists():
+        lrc_text = Path(synced_lyrics_path).read_text(encoding="utf-8")
+        if A.lrc_is_approved(lrc_text):
+            lyric_lines = A._lyric_lines_with_start_index(lyrics_path)
+            matched = A.match_lrc_to_lines([t for t, _ in lyric_lines], A.parse_lrc(lrc_text))
+            starts = [(lyric_lines[li][1], t) for li, t in matched.items()]
+            blocks = lrc_blocks(len(words), starts, audio_dur)
+            print(_t("align.ctc_lrc_blocks", n=len(starts)))
+
+    em, frame_s = compute_emissions(model, audio, device)
+    em[:, star_id] = STAR_LOGP
+    times = align_blocks(em, frame_s, blocks, word_tokens, line_ends, star_id, dictionary["-"])
+    if all(t is None for t in times):
+        return None
+    timings = to_word_timings(words, line_ends, singers, fill_missing(times))
+    flag_low_confidence_lines(timings)
+    return timings
 
 
 def to_word_timings(words, line_ends, singers, res):

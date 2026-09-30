@@ -42,7 +42,8 @@ interface USNote {
   text: string;
   note_type: string; // ":" normal | "*" golden | "F" freestyle
   // Proveniência do timing (align.py): "anchor" | "fuzzy" | "realign" |
-  // "interpolated". Ausente em pacotes gerados antes desse campo existir.
+  // "lrc" | "interpolated" | "ctc" | "ctc_low". Ausente em pacotes gerados
+  // antes desse campo existir.
   source?: string | null;
   // Confiança fonética medida (WordTiming.score em align.py), herdada da
   // palavra de origem. Ausente em pacotes gerados antes desse campo existir.
@@ -59,6 +60,9 @@ const SOURCE_COLORS: Record<string, string> = {
   realign: "#7a5cd6", // medido: 2º passe de forced alignment na janela
   lrc: "#c05a9e", // semi-medido: início de linha da letra sincronizada (LRCLIB)
   interpolated: "#d6802f", // ESTIMADO: interpolação entre vizinhas - revisar!
+  ctc: "#3d6fd6", // medido: letra inteira alinhada de uma vez (ctc_align.py)
+  // "ctc_low" não tem cor própria: é o vermelho de LOW_CONFIDENCE_COLOR (ver
+  // isLowConfidenceAnchor) - mesma falha, "medido mas suspeito".
 };
 const DEFAULT_NOTE_COLOR = "#3d6fd6";
 
@@ -78,6 +82,11 @@ const LOW_SCORE_ANCHOR_THRESHOLD = 0.15;
 function isLowConfidenceAnchor(n: USNote): boolean {
   if (n.note_type === "F") return false; // já sinalizado por outro caminho (freestyle)
   if (n.source == null || n.source === "interpolated") return false; // já coberto pela cor "interpolated"
+  // Alinhamento CTC: a confiança é julgada por LINHA no sidecar (ctc_align.
+  // LOW_LINE_SCORE) - o score por palavra dele não é o score fonético do
+  // whisperx, e o limiar acima marcaria nota boa demais.
+  if (n.source === "ctc_low") return true;
+  if (n.source === "ctc") return false;
   return typeof n.score === "number" && n.score < LOW_SCORE_ANCHOR_THRESHOLD;
 }
 
@@ -2016,6 +2025,8 @@ export default function ReviewScreen({ outDir, onClose, onSendToForm }: Props) {
     realign: t("revSourceRealign"),
     lrc: t("revSourceLrc"),
     interpolated: t("revSourceInterp"),
+    ctc: t("revSourceCtc"),
+    ctc_low: t("revSourceCtcLow"),
   };
 
   return (
@@ -2195,7 +2206,9 @@ export default function ReviewScreen({ outDir, onClose, onSendToForm }: Props) {
         <p className="review-legend">
           {t("revLegendTiming")}{" "}
           <span className="legend-chip" style={{ background: SOURCE_COLORS.anchor }} />{" "}
-          {t("revLegendAnchor")}{" "}
+          {song.notes.some((n) => n.source === "ctc" || n.source === "ctc_low")
+            ? t("revLegendCtc")
+            : t("revLegendAnchor")}{" "}
           <span className="legend-chip" style={{ background: SOURCE_COLORS.fuzzy }} />{" "}
           {t("revLegendFuzzy")}{" "}
           <span className="legend-chip" style={{ background: SOURCE_COLORS.realign }} />{" "}

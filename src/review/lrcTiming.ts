@@ -37,7 +37,7 @@ export interface TimingRow {
   lrcText: string;
   /** Matching verse in the package, or null when it did not match. */
   verseIndex: number | null;
-  /** First MEASURED time in that verse (anchor/fuzzy/realign), or null. */
+  /** First MEASURED time in that verse (anchor/fuzzy/realign/ctc), or null. */
   heardTime: number | null;
   heardSource: string | null;
   /** heardTime - lrcTime (positive = the AI heard it after the .lrc). */
@@ -68,7 +68,7 @@ export interface TimingRow {
 export const SUSPECT_GAP_S = 1.5;
 
 /** Sources that mean a real measurement of the audio - not a guess, not .lrc. */
-const MEASURED_SOURCES = new Set(["anchor", "fuzzy", "realign"]);
+const MEASURED_SOURCES = new Set(["anchor", "fuzzy", "realign", "ctc", "ctc_low"]);
 
 /** The source a note carries when its time came from the synced lyrics. */
 const SEEDED_SOURCE = "lrc";

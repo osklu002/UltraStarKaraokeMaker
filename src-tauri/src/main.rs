@@ -288,6 +288,12 @@ struct PipelineResult {
     /// "word-recall" (anchored/total): baixo = Whisper reconheceu pouco da
     /// letra, âncoras podem estar erradas (alinhamento confiante mas errado).
     notes_whisper_anchored: usize,
+    /// Notas alinhadas pelo CTC global (ctc_align.py: "ctc" + "ctc_low"). Com
+    /// elas não existe âncora do Whisper, e o aviso de word-recall acima não
+    /// se aplica - a confiança vem de `notes_ctc_low`.
+    notes_ctc: usize,
+    /// Notas do CTC numa linha de confiança baixa ("ctc_low").
+    notes_ctc_low: usize,
 }
 
 /// Caminho do ffmpeg EMBUTIDO do USKMaker (`<pasta de dados>/bin/ffmpeg[.exe]`,
@@ -783,6 +789,16 @@ async fn run_pipeline(
         .iter()
         .filter(|n| matches!(n.source.as_deref(), Some("anchor") | Some("fuzzy")))
         .count();
+    let notes_ctc = song
+        .notes
+        .iter()
+        .filter(|n| matches!(n.source.as_deref(), Some("ctc") | Some("ctc_low")))
+        .count();
+    let notes_ctc_low = song
+        .notes
+        .iter()
+        .filter(|n| n.source.as_deref() == Some("ctc_low"))
+        .count();
 
     Ok(PipelineResult {
         txt_path: txt_path.to_string_lossy().to_string(),
@@ -794,6 +810,8 @@ async fn run_pipeline(
         notes_total,
         notes_estimated,
         notes_whisper_anchored,
+        notes_ctc,
+        notes_ctc_low,
     })
 }
 

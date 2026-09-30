@@ -28,11 +28,11 @@ import library_replay as lr  # noqa: E402
 import usdx_parse  # noqa: E402
 
 
-def _emissions(cache: Path, audio, device: str):
+def _emissions(cache: Path, audio, device: str, stem_tag: str = ""):
     """MMS_FA emissions over the whole stem, cached (deterministic per stem)."""
     import torch
     from pipeline.ctc_align import _get_mms_model, compute_emissions
-    p = cache / "emissions_mms.pt"
+    p = cache / f"emissions_mms{stem_tag}.pt"
     if p.exists():
         d = torch.load(p)
         return d["em"], d["frame_s"]
@@ -55,6 +55,32 @@ def _whisper_words(cache: Path, audio, language: str, device: str) -> list[dict]
     return ww
 
 
+def _dedup_lyrics(cache: Path, lyrics: Path) -> Path:
+    """Letra com cada linha repetida só na 1ª vez (refrão "escrito uma vez só")."""
+    out = cache / "lyrics_dedup.txt"
+    seen, keep = set(), []
+    for line in lyrics.read_text(encoding="utf-8").splitlines():
+        key = line.strip().lower()
+        if key and key in seen:
+            continue
+        seen.add(key)
+        keep.append(line)
+    out.write_text("\n".join(keep) + "\n", encoding="utf-8")
+    return out
+
+
+def _whisper_path(audio, words, language, device, cache):
+    """O alinhador do Whisper (align.py, sem .lrc e sem resgates) a partir da
+    transcrição cacheada - a mesma que o `hybrid` usa."""
+    from pipeline.align import (compute_anchors, realign_gap_windows,
+                                timings_from_anchors, _get_align_model)
+    anchors = compute_anchors(_whisper_words(cache, audio, language, device), words)
+    timings = timings_from_anchors(anchors, words, language, audio_end=len(audio) / 16000.0)
+    model, meta = _get_align_model(language, device)
+    realign_gap_windows(timings, model, meta, audio, device, language)
+    return timings
+
+
 def _run_variant(variant: str, cache: Path, lyrics: Path, language: str, device: str):
     import whisperx
     from pipeline.align import _load_lyrics_words_with_line_ends, compute_anchors
@@ -63,9 +89,28 @@ def _run_variant(variant: str, cache: Path, lyrics: Path, language: str, device:
     # "...+snap" = pós-processo: início de linha puxado pro ataque vocal
     snap = variant.endswith("+snap")
     variant = variant.removesuffix("+snap")
-    audio = whisperx.load_audio(str(cache / "vocals.wav"))
+    # "...@lead" = no stem da voz principal isolada (resgate 4b do main.py)
+    lead = variant.endswith("@lead")
+    variant = variant.removesuffix("@lead")
+    # "...~dedup" = letra com as linhas repetidas removidas
+    if variant.endswith("~dedup"):
+        variant = variant.removesuffix("~dedup")
+        lyrics = _dedup_lyrics(cache, lyrics)
+    stem = cache / "vocals.wav"
+    if lead:
+        stem = cache / "lead_vocals.wav"
+        if not stem.exists():
+            from pipeline.separate import isolate_lead_vocal
+            lr.log("  isolating lead vocal...")
+            stem = isolate_lead_vocal(cache / "vocals.wav", cache)
+    audio = whisperx.load_audio(str(stem))
     words, line_ends, singers = _load_lyrics_words_with_line_ends(lyrics)
-    em = _emissions(cache, audio, device)
+    if variant == "whisper":
+        timings = _whisper_path(audio, words, language, device, cache)
+        for wt, le in zip(timings, line_ends):
+            wt.is_line_end = le
+        return timings
+    em = _emissions(cache, audio, device, "_lead" if lead else "")
     anchors = None
     if variant.startswith("hybrid"):
         anchors = compute_anchors(_whisper_words(cache, audio, language, device), words)

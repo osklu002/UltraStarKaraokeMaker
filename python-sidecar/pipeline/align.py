@@ -91,6 +91,8 @@ SOURCE_FUZZY = "fuzzy"            # match aproximado de grafia (medido)
 SOURCE_REALIGN = "realign"        # 2º passe de forced alignment na janela (medido)
 SOURCE_LRC = "lrc"                # início de linha do .lrc (LRCLIB) - semi-medido
 SOURCE_INTERPOLATED = "interpolated"  # estimado entre vizinhos (NÃO medido)
+SOURCE_CTC = "ctc"                # forced alignment global da letra (ctc_align.py) - medido
+SOURCE_CTC_LOW = "ctc_low"        # idem, numa linha de confiança baixa - conferir
 
 
 @dataclass
@@ -1237,7 +1239,8 @@ def realign_gap_windows(
 
 def alignment_stats(timings: list[WordTiming]) -> dict:
     """Resumo por fonte + maiores runs ainda interpoladas (diagnóstico)."""
-    counts = {s: 0 for s in (SOURCE_ANCHOR, SOURCE_FUZZY, SOURCE_REALIGN, SOURCE_LRC, SOURCE_INTERPOLATED)}
+    counts = {s: 0 for s in (SOURCE_ANCHOR, SOURCE_FUZZY, SOURCE_REALIGN, SOURCE_LRC,
+                             SOURCE_INTERPOLATED, SOURCE_CTC, SOURCE_CTC_LOW)}
     for t in timings:
         counts[t.source] = counts.get(t.source, 0) + 1
 
