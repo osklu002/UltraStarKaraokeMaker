@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.23.1] — 2026-09-30
+
+### Fixed
+- **Windows installer and Tauri version aligned for Winget publication.** Fixes version in `tauri.conf.json` and `Cargo.toml` to match app version for correct Winget package generation.
+
 ## [0.23.0] — 2026-09-30 (contribution by [@osklu002](https://github.com/osklu002))
 
 ### Changed

@@ -6,6 +6,11 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+## [0.23.1] - 2026-09-30
+
+### Corrigido
+- **Versão do instalador Windows e Tauri alinhada para publicação no Winget.** Corrige a versão em `tauri.conf.json` e `Cargo.toml` para coincidir com a versão do app e garantir o pacote correto no Winget.
+
 ## [0.23.0] - 2026-09-30 (contribuição [@osklu002](https://github.com/osklu002))
 
 ### Alterado

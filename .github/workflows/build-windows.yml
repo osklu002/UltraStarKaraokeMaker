@@ -104,3 +104,18 @@ jobs:
             tests/test_filenames_logic.py \
             tests/test_ultrastar_format_conventions.py \
             -v
+
+  publish-winget:
+    name: Publish to WinGet
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish to WinGet
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: walterfr.USKMaker
+          installers-regex: '\.exe$'
+          token: ${{ secrets.WINGET_TOKEN }}
+          fork-user: ${{ github.repository_owner }}
+          release-tag: ${{ github.ref_name }}

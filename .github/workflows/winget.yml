@@ -1,81 +1,30 @@
 name: Publish to Winget
 
-# Roda quando um release é publicado: atualiza o manifesto do walterfr.USKMaker
-# no microsoft/winget-pkgs via wingetcreate (abre PR lá automaticamente).
+# Publica novas versões do USKMaker no Windows Package Manager (winget-pkgs)
+# via vedantmgoyal9/winget-releaser (baseado em komac).
 #
-# Também aceita disparo manual (workflow_dispatch), com dois usos:
-#   1. Bootstrap (manifest_path preenchido): `wingetcreate submit` do
-#      manifesto local em packaging/winget/, que CRIA o pacote lá - só
-#      necessário na 1ª vez (feito em 04/08, PR microsoft/winget-pkgs#412424).
-#   2. Catch-up (catchup_version preenchido): roda o MESMO `wingetcreate
-#      update` do caminho automático, pra releases que saíram ENQUANTO o
-#      bootstrap ainda não tinha mesclado (o update falha até o pacote
-#      existir lá - aconteceu em v0.18.5/v0.19.0/v0.20.0, ver CHANGELOG).
-#
-# Precisa do secret WINGET_TOKEN: um GitHub PAT (classic, escopo public_repo)
-# da conta que vai abrir o fork/PR no microsoft/winget-pkgs.
+# Precisa do secret WINGET_TOKEN: um GitHub PAT (classic, escopos public_repo e workflow)
+# da conta que possui o fork walterfr/winget-pkgs.
 
 on:
   release:
     types: [published]
   workflow_dispatch:
     inputs:
-      manifest_path:
-        description: "Bootstrap: pasta do manifesto local pra 1ª submissão (deixe vazio se não for bootstrap)"
-        required: false
-        default: ""
-      catchup_version:
-        description: "Catch-up: versão (ex.: 0.20.0) pra atualizar o winget manualmente (deixe vazio se não for catch-up)"
+      release_tag:
+        description: "Tag da release (ex.: v0.23.1) para publicar no winget"
         required: false
         default: ""
 
 jobs:
   publish:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        if: github.event_name == 'workflow_dispatch'
-
-      - name: Bootstrap - submit local manifest (1ª vez só)
-        if: github.event_name == 'workflow_dispatch' && inputs.manifest_path != ''
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri "https://aka.ms/wingetcreate/latest" -OutFile wingetcreate.exe
-          .\wingetcreate.exe submit "${{ inputs.manifest_path }}" --token "${{ secrets.WINGET_TOKEN }}"
-
-      - name: Update winget manifest and submit PR (release novo ou catch-up manual)
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.catchup_version != '')
-        shell: pwsh
-        run: |
-          if ("${{ github.event_name }}" -eq "release") {
-            $version = "${{ github.event.release.tag_name }}".TrimStart('v')
-          } else {
-            $version = "${{ inputs.catchup_version }}".TrimStart('v')
-          }
-          $url = "https://github.com/walterfr/UltraStarKaraokeMaker/releases/download/v${version}/USKMaker_${version}_x64-setup.exe"
-
-          if ("${{ github.event_name }}" -eq "release") {
-            Write-Host "Aguardando o instalador ficar disponivel (o build do Windows leva ~10 min)..."
-            $max_retries = 30
-            $retry_count = 0
-            while ($retry_count -lt $max_retries) {
-              try {
-                $response = Invoke-WebRequest -Uri $url -Method Head -UseBasicParsing
-                if ($response.StatusCode -eq 200 -or $response.StatusCode -eq 302) {
-                  Write-Host "Instalador encontrado! Prosseguindo..."
-                  break
-                }
-              } catch {
-                Write-Host "Instalador ainda nao disponivel (tentativa $($retry_count+1)/$max_retries). Esperando 30s..."
-              }
-              Start-Sleep -Seconds 30
-              $retry_count++
-            }
-          }
-
-          Invoke-WebRequest -Uri "https://aka.ms/wingetcreate/latest" -OutFile wingetcreate.exe
-          .\wingetcreate.exe update walterfr.USKMaker `
-            --version $version `
-            --urls $url `
-            --submit `
-            --token "${{ secrets.WINGET_TOKEN }}"
+      - name: Publish to WinGet
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: walterfr.USKMaker
+          installers-regex: '\.exe$'
+          token: ${{ secrets.WINGET_TOKEN }}
+          fork-user: ${{ github.repository_owner }}
+          release-tag: ${{ inputs.release_tag || github.event.release.tag_name || github.ref_name }}
