@@ -6,6 +6,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+### Corrigido
+
+- **Palavras sustentadas saíam como `you~~~`, com várias notas `~` no mesmo tom.** A nota `~` existe para acompanhar a melodia quando o tom muda durante uma sílaba longa, mas falhas curtas na voz soprosa ou em falsete também partiam a sílaba, e cada pedaço virava mais um `~` exatamente no mesmo tom. Agora esses pedaços são juntados à nota anterior (só quando o tom e o tipo de nota são iguais e a pausa é menor que um quarto de segundo; fim de palavra e quebra de linha nunca são juntados). Em "a-ha - Take On Me", as notas `~` caíram de 14,6% para 9,2% do total (o chart feito à mão tem 4,0%); nas outras músicas a mudança foi de 0 a 1,7 ponto. As notas `~` que mudam de tom ficam exatamente como antes.
+
 ## [0.22.0] - 2026-09-29 (contribuição [@osklu002](https://github.com/osklu002))
 
 ### Adicionado

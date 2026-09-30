@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Held words came out as `you~~~`, with several `~` notes at the same pitch.** A `~` note is meant to follow the melody when the pitch changes during a held syllable, but short dropouts in breathy or falsetto singing also split the syllable, each piece becoming another `~` at exactly the same pitch. Those are now folded into the note before them (only when the pitch and note type match and the gap is under a quarter second; word ends and line breaks are never merged). On "a-ha - Take On Me", `~` notes went from 14.6% of all notes to 9.2% (the hand-made chart has 4.0%); other songs changed by 0 to 1.7 points. `~` notes that do change pitch stay exactly as before.
+
 ## [0.21.3] — 2026-09-25 (contribution by [@DJ-Joel](https://github.com/DJ-Joel))
 
 ### Fixed
