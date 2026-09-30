@@ -108,7 +108,18 @@ ALIGNERS = ("ctc", "whisper")
 # GPU) disparava em 11/16 músicas; com 0,20 em 7/16, com os mesmos ganhos.
 CTC_RESCUE_LOW_FRAC = 0.20
 CTC_WARN_PCT = 10.0          # acima disto avisa pra conferir as linhas marcadas
-CTC_FAILED_PCT = 50.0        # acima disto tenta a 2ª separação (4c) e sugere regerar
+
+# Acima disto o CTC é descartado e a Etapa 4 segue pelo caminho do Whisper
+# (com os resgates dele). MEDIDO (01/10/2026, 24 músicas, 3 amostras): ordenadas
+# por esta fração, há um vão VAZIO entre 0,24 e 0,43. Acima dele (7 músicas) o
+# CTC perdeu feio em 5 (Heart of Glass 0,67 -> 0,45 com erro mediano de 20 s,
+# Super Bass 0,68 -> 0,44) e empatou em 2; abaixo (17) empatou ou ganhou, às
+# vezes muito (Dansa I Neon 0,41 -> 1,00). Palavras a <= 1 s do chart feito à
+# mão, mediana das 24: Whisper 0,867, CTC sempre 0,919, CTC + este fallback
+# 0,936, e a pior música sobe de 0,44 pra 0,49. Qualquer valor dentro do vão dá
+# as mesmas escolhas - 0,35 fica no meio dele. (O limiar foi escolhido depois
+# de ver a 3ª amostra; as duas primeiras mostram o mesmo vão sozinhas.)
+CTC_FALLBACK_LOW_FRAC = 0.35
 
 # Piso de "word-recall" do Whisper: a fração da letra que o Whisper reconheceu
 # de verdade (âncoras exatas + fuzzy, ANTES do realinhamento). Abaixo disto, o
@@ -528,21 +539,23 @@ def split_duet_artists(artist: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _align_with_ctc(stems, source, work_path: Path, lyrics_path: str, language: str,
+def _align_with_ctc(stems, work_path: Path, lyrics_path: str, language: str,
                     device: str, duet: bool, synced_lyrics_path: str | None):
     """
     Etapa 4 pelo CTC global (pipeline/ctc_align.py): a letra inteira alinhada
     de uma vez, sem Whisper. Devolve (word_timings, stems), ou (None, stems)
-    quando a letra não cabe no vocabulário do modelo ou algo falha - aí o
-    chamador segue pelo caminho do Whisper, como antes.
+    quando a letra não cabe no vocabulário do modelo, algo falha ou a
+    confiança ficou baixa demais - aí o chamador segue pelo caminho do
+    Whisper, como antes.
 
-    Resgates, com o sinal interno do CTC (fração de palavras em linha de
-    confiança baixa, ctc_align.low_confidence_frac) no lugar das interpoladas:
-      4b - voz principal isolada, quando o coro/apoio atrapalha;
-      4c - 2ª separação do Demucs, quando o alinhamento desabou.
-    Mesmo contrato dos resgates do Whisper: ganha quem tiver MENOS palavras em
-    linha de confiança baixa, e qualquer falha é NÃO-FATAL.
-    O 4d (VAD mais sensível) não se aplica: o CTC não usa detecção de voz.
+    Com o sinal interno do CTC (fração de palavras em linha de confiança
+    baixa, ctc_align.low_confidence_frac) no lugar das interpoladas:
+      > CTC_FALLBACK_LOW_FRAC - devolve (None, stems): o chamador segue pelo
+          caminho do Whisper, que é melhor nesse regime (ver a constante);
+      > CTC_RESCUE_LOW_FRAC - 4b, voz principal isolada (ganha quem tiver MENOS
+          palavras em linha de confiança baixa; falha NÃO-FATAL).
+    Não há 4c (2ª separação) nem 4d (VAD) aqui: acima do ponto em que o 4c
+    faria sentido o fallback já leva pro Whisper, que tem os dele.
     """
     from pipeline.ctc_align import align_lyrics_ctc_to_audio, low_confidence_frac
 
@@ -565,6 +578,11 @@ def _align_with_ctc(stems, source, work_path: Path, lyrics_path: str, language: 
     low = low_confidence_frac(word_timings)
     debug_log(f"ETAPA 4 - CTC concluído. {len(word_timings)} palavras, {100 * low:.1f}% em linha de confiança baixa")
 
+    if low > CTC_FALLBACK_LOW_FRAC:
+        debug_log(f"ETAPA 4 - CTC com {100 * low:.1f}% em linha de confiança baixa, caindo pro Whisper")
+        console.print(t("main.ctc_fallback", pct=100 * low))
+        return None, stems
+
     if low > CTC_RESCUE_LOW_FRAC and not duet:
         console.print(t("main.ctc_rescue4b_try", pct=100 * low))
         debug_log(f"ETAPA 4b (CTC) - resgate: low={low:.2f}, iniciando isolate_lead_vocal")
@@ -584,26 +602,6 @@ def _align_with_ctc(stems, source, work_path: Path, lyrics_path: str, language: 
             debug_log(f"ETAPA 4b (CTC) - falhou (não-fatal): {e}")
             console.print(t("main.rescue4b_fail", err=e))
 
-    if low * 100 > CTC_FAILED_PCT:
-        console.print(t("main.ctc_rescue4c_try", pct=100 * low))
-        debug_log(f"ETAPA 4c (CTC) - 2a separacao: low={low:.2f}")
-        try:
-            stems2 = separate_vocals(source.audio_wav, work_path / "stems_retry", device=device)
-            retry = align_lyrics_ctc_to_audio(
-                stems2.vocals, Path(lyrics_path), language, device, synced_lyrics_path=synced,
-            )
-            retry_low = low_confidence_frac(retry) if retry else 1.0
-            debug_log(f"ETAPA 4c (CTC) - baixa confiança: 1a={low:.3f} 2a={retry_low:.3f}")
-            if retry and retry_low < low:
-                console.print(t("main.ctc_rescue_ok", before=100 * low, after=100 * retry_low))
-                # o pitch tem que sair do MESMO stem que alinhou
-                word_timings, low, stems = retry, retry_low, stems2
-            else:
-                console.print(t("main.ctc_rescue_no", before=100 * low, after=100 * retry_low))
-        except Exception as e:
-            debug_log(f"ETAPA 4c (CTC) - falhou (não-fatal): {e}")
-            console.print(t("main.rescue4c_fail", err=e))
-
     return word_timings, stems
 
 
@@ -618,9 +616,6 @@ def _report_ctc_alignment(word_timings) -> None:
     pct = 100 * low_confidence_frac(word_timings)
     if pct > CTC_WARN_PCT:
         console.print(t("main.ctc_low_warn", pct=pct))
-    if pct > CTC_FAILED_PCT:
-        console.print(t("main.align_failed_hint"))
-        debug_log(f"ALINHAMENTO CTC SUSPEITO: {pct:.1f}% em linha de confiança baixa")
 
 
 def _align_with_whisper(stems, source, work_path: Path, lyrics_path: str, language: str,
@@ -966,7 +961,7 @@ def run_pipeline(
     word_timings = None
     if aligner == "ctc":
         word_timings, stems = _align_with_ctc(
-            stems, source, work_path, lyrics_path, language, device, duet, synced_lyrics_path,
+            stems, work_path, lyrics_path, language, device, duet, synced_lyrics_path,
         )
     if word_timings is None:
         word_timings, stems = _align_with_whisper(
