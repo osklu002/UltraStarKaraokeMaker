@@ -146,8 +146,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "[bold cyan]Step 3/6 — Detecting BPM",
     },
     "main.step4": {
-        "pt": "[bold cyan]Etapa 4/6 — Alinhando letra ao áudio (WhisperX, âncora+interpolação)",
-        "en": "[bold cyan]Step 4/6 — Aligning lyrics to audio (WhisperX, anchor+interpolation)",
+        "pt": "[bold cyan]Etapa 4/6 — Alinhando letra ao áudio",
+        "en": "[bold cyan]Step 4/6 — Aligning lyrics to audio",
     },
     "main.step5": {
         "pt": "[bold cyan]Etapa 5/6 — Buscando metadados (capa, ano, gênero)",
@@ -280,6 +280,60 @@ MESSAGES: dict[str, dict[str, str]] = {
                "mantendo o alinhamento que já temos."),
         "en": ("[yellow]WARNING[/yellow] Could not separate the vocals again ({err}) - "
                "keeping the alignment we already have."),
+    },
+    "main.aligner_ctc": {
+        "pt": "[cyan]Alinhando a letra inteira de uma vez contra o áudio (CTC)...[/cyan]",
+        "en": "[cyan]Aligning the whole lyrics at once against the audio (CTC)...[/cyan]",
+    },
+    "main.ctc_unsupported": {
+        "pt": ("[dim]A letra usa um alfabeto que o alinhador CTC não conhece - usando o "
+               "alinhamento pelo Whisper.[/dim]"),
+        "en": ("[dim]The lyrics use an alphabet the CTC aligner does not know - using the "
+               "Whisper alignment.[/dim]"),
+    },
+    "main.ctc_failed": {
+        "pt": ("[yellow]AVISO[/yellow] O alinhamento CTC falhou ({err}) - usando o "
+               "alinhamento pelo Whisper."),
+        "en": ("[yellow]WARNING[/yellow] The CTC alignment failed ({err}) - using the "
+               "Whisper alignment."),
+    },
+    "main.ctc_rescue4b_try": {
+        "pt": ("[yellow]—[/yellow] {pct:.0f}% das palavras em linhas de confiança baixa - "
+               "tentando resgate com a voz principal isolada do coro/apoio..."),
+        "en": ("[yellow]—[/yellow] {pct:.0f}% of the words in low-confidence lines - "
+               "trying a rescue with the lead vocal isolated from the choir/backing vocals..."),
+    },
+    "main.ctc_rescue4c_try": {
+        "pt": ("[yellow]—[/yellow] {pct:.0f}% das palavras em linhas de confiança baixa: o "
+               "alinhamento desabou. Separando o vocal de novo (a separação varia a cada "
+               "tentativa) e realinhando..."),
+        "en": ("[yellow]—[/yellow] {pct:.0f}% of the words in low-confidence lines: the "
+               "alignment collapsed. Separating the vocals again (the separation varies on "
+               "every attempt) and realigning..."),
+    },
+    "main.ctc_rescue_ok": {
+        "pt": ("[green]OK[/green] Resgate melhorou: {before:.0f}% -> {after:.0f}% das palavras "
+               "em linhas de confiança baixa."),
+        "en": ("[green]OK[/green] Rescue improved it: {before:.0f}% -> {after:.0f}% of the words "
+               "in low-confidence lines."),
+    },
+    "main.ctc_rescue_no": {
+        "pt": ("[dim]Resgate não melhorou ({before:.0f}% -> {after:.0f}% em linhas de confiança "
+               "baixa) - mantendo o alinhamento anterior.[/dim]"),
+        "en": ("[dim]Rescue did not improve it ({before:.0f}% -> {after:.0f}% in low-confidence "
+               "lines) - keeping the previous alignment.[/dim]"),
+    },
+    "main.ctc_breakdown": {
+        "pt": ("    [dim]{ctc} medidas / {low} em linhas de confiança baixa / {interp} sem "
+               "letra alinhável (estimadas)[/dim]"),
+        "en": ("    [dim]{ctc} measured / {low} in low-confidence lines / {interp} with no "
+               "alignable letters (estimated)[/dim]"),
+    },
+    "main.ctc_low_warn": {
+        "pt": ("[yellow]AVISO[/yellow] {pct:.1f}% das palavras estão em linhas de confiança "
+               "baixa - vale conferir as linhas marcadas em vermelho na revisão."),
+        "en": ("[yellow]WARNING[/yellow] {pct:.1f}% of the words are in low-confidence lines - "
+               "worth checking the lines marked in red in the review."),
     },
     "main.words_done": {
         "pt": "[green]OK[/green] {n} palavras processadas.",
@@ -637,6 +691,12 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
 
     # ------------------------------------------------------------ align.py
+    "align.ctc_lrc_blocks": {
+        "pt": ("[INFO] Letra sincronizada APROVADA pelo usuário - {n} inícios de linha "
+               "conferidos de ouvido limitam o alinhamento."),
+        "en": ("[INFO] Synced lyrics APPROVED by the user - {n} line starts checked by ear "
+               "bound the alignment."),
+    },
     "align.lrc_approved": {
         "pt": ("[INFO] Letra sincronizada APROVADA pelo usuário - os inícios de linha "
                "conferidos de ouvido mandam sobre as âncoras do Whisper, e as checagens de "

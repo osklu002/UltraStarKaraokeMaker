@@ -887,6 +887,15 @@ def aggregate(sample: list[dict], run_dir: str) -> None:
     print(f"\n  full table: {csv_path}")
 
 
+def _prefer_safe_ct2_allocator_on_hip() -> None:
+    try:
+        import torch
+        if getattr(torch.version, "hip", None):
+            os.environ.setdefault("CT2_CUDA_ALLOCATOR", "cub_caching")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--lib", default=r"D:\Canciones Karaoke")
@@ -904,8 +913,15 @@ def main() -> int:
                     help="mede só um bucket de idioma (ex.: --lang pt)")
     args = ap.parse_args()
 
+    # Mesmo guarda do app (main.py:_prefer_safe_ct2_allocator_on_hip): em GPU
+    # AMD o alocador padrão do CTranslate2 corrompe o Whisper em silêncio.
+    # Sem isto a baseline medida aqui NÃO é a do app - medido 30/09/2026 (RX
+    # 7800 XT): "Nothing Else Matters" transcrita com 28 palavras em vez de
+    # 219, within_1s 0,09, e o lote morreu com abort (exit 134).
+    _prefer_safe_ct2_allocator_on_hip()
+
     runs_root = str(_HERE.parents[0] / "eval_runs")
-    manifest = build_manifest(args.lib, runs_root)
+    manifest = build_manifest(os.path.expanduser(args.lib), runs_root)
     if not manifest:
         return 2
 

@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Lyrics are now aligned to the audio all at once, not word by word from what Whisper heard.** Until now, alignment started from Whisper's own transcription of the vocals and only used the real lyrics to fill in what Whisper missed - so when Whisper misheard a chorus, or a backing choir took over, the lyrics could not correct it. The new aligner lines up the whole lyrics against the vocal track in one pass (an MMS forced-alignment model), so every word gets a measured place in the song and the lyric order is guaranteed. Measured against hand-made charts on the same separated vocals, two samples of 8 songs (English and Swedish): words within 1 s of the hand chart went from 0.867 to 0.966 and from 0.883 to 0.919; the typical start error from 95 ms to 49 ms and 84 ms. In the worst case found ("Nothing Else Matters") the old path put nearly every word 39 s early while reporting nothing wrong. It is also much faster: the alignment step takes seconds instead of a minute. Lyrics in another alphabet (Japanese, Korean, Russian...) keep the previous Whisper-based alignment automatically.
+
+- **Lines the aligner is unsure about are marked for review.** Each line gets a confidence from the aligner itself; on the test songs, the lines it marks as low-confidence contain 85% of the lines that were actually off. They show in red in the review screen (and "jump to next flagged" stops on them), the result screen warns when more than 10% of the song is in such lines, and they decide when the lead-vocal and second-separation rescues run.
+
 ### Fixed
 
 - **In a queue, the first song in a different language than the one before it failed.** The error was `'50359' is not a valid task`. The recognition model is kept loaded between songs of a queue, and when the language changed the library it comes from rebuilt its settings with an internal number where it expected the word "transcribe". The app now always says "transcribe" explicitly, so the language can change freely between songs. Found when a batch of English songs followed by Swedish ones failed on every Swedish song.

@@ -28,6 +28,8 @@ HISTÓRICO DE DECISÕES E BUGS (resumo - detalhes nos módulos de cada etapa):
   escrito só uma vez (erro comum de letras com "(2x)"/"(4x)").
 - FASE 3: metadados (capa/ano/gênero) em cascata (arquivo -> MusicBrainz/CAA);
   e (complemento) suporte opcional a baixar o VÍDEO do YouTube para o pacote.
+- Etapa 4 (30/09/2026): alinhador padrão passa a ser o CTC global da letra
+  inteira (pipeline/ctc_align.py); o caminho do Whisper vira fallback.
 """
 
 from __future__ import annotations
@@ -86,6 +88,27 @@ console = Console()
 #
 # A UI usa o mesmo corte sobre notes_estimated/notes_total (App.tsx).
 ALIGNMENT_FAILED_PCT = 50.0
+
+# Alinhador da Etapa 4: "ctc" (CTC global da letra inteira, pipeline/ctc_align.py)
+# ou "whisper" (transcrição livre + âncoras, pipeline/align.py - o de antes).
+# O "ctc" cai sozinho no "whisper" quando a letra não cabe no vocabulário dele.
+# MEDIDO (30/09/2026, mesmas 8 músicas e stems, 5 en + 3 sv): palavras a <= 1 s
+# do chart feito à mão 0,867 -> 0,966; erro mediano de início 95 -> 49 ms.
+DEFAULT_ALIGNER = "ctc"
+ALIGNERS = ("ctc", "whisper")
+
+# Limiares do caminho CTC, sobre a fração de palavras em linha de confiança
+# baixa (ctc_align.low_confidence_frac) - o análogo do interp_frac do Whisper.
+# Acima disto tenta a voz principal isolada (4b). MEDIDO (30/09/2026, 16
+# músicas, 2 amostras): o stem isolado é ARRISCADO no CTC - numa música
+# "Skönheten Och Odjuret" ele derrubou o acerto de 1,00 pra 0,00 - mas a regra
+# "ganha quem tiver menos palavras em linha de confiança baixa" rejeitou todos
+# os stems catastróficos; saldo levemente positivo (+0,11 Scar Tissue, +0,04
+# Jag Ljuger Så Bra, -0,11 Kylie In Your Eyes). Com 0,10 o resgate (~3 min de
+# GPU) disparava em 11/16 músicas; com 0,20 em 7/16, com os mesmos ganhos.
+CTC_RESCUE_LOW_FRAC = 0.20
+CTC_WARN_PCT = 10.0          # acima disto avisa pra conferir as linhas marcadas
+CTC_FAILED_PCT = 50.0        # acima disto tenta a 2ª separação (4c) e sugere regerar
 
 # Piso de "word-recall" do Whisper: a fração da letra que o Whisper reconheceu
 # de verdade (âncoras exatas + fuzzy, ANTES do realinhamento). Abaixo disto, o
@@ -505,116 +528,110 @@ def split_duet_artists(artist: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def run_pipeline(
-    url: str | None,
-    file: str | None,
-    lyrics_path: str,
-    title: str,
-    artist: str,
-    language: str,
-    out_dir: str,
-    manual_bpm: float | None,
-    manual_gap_ms: int,
-    device: str,
-    with_video: bool = False,
-    bg_video: bool = False,
-    bg_video_url: str | None = None,
-    clean_work: bool = False,
-    synced_lyrics_path: str | None = None,
-    with_stems: bool = False,
-    duet: bool = False,
-    backtrack: bool = False,
-    transpose: int = 0,
-    yarg_export: bool = False,
-    keep_harmonies: bool = False,
-    mp4_export: bool = False,
-    whisper_model: str = "auto",
-    romanize: bool = False,
-    audio_format: str = "ogg",
-    max_video_resolution: int = 0,
-):
-    global _debug_log_path
+def _align_with_ctc(stems, source, work_path: Path, lyrics_path: str, language: str,
+                    device: str, duet: bool, synced_lyrics_path: str | None):
+    """
+    Etapa 4 pelo CTC global (pipeline/ctc_align.py): a letra inteira alinhada
+    de uma vez, sem Whisper. Devolve (word_timings, stems), ou (None, stems)
+    quando a letra não cabe no vocabulário do modelo ou algo falha - aí o
+    chamador segue pelo caminho do Whisper, como antes.
 
-    out_path = Path(out_dir)
-    work_path = out_path / "_work"
-    out_path.mkdir(parents=True, exist_ok=True)
+    Resgates, com o sinal interno do CTC (fração de palavras em linha de
+    confiança baixa, ctc_align.low_confidence_frac) no lugar das interpoladas:
+      4b - voz principal isolada, quando o coro/apoio atrapalha;
+      4c - 2ª separação do Demucs, quando o alinhamento desabou.
+    Mesmo contrato dos resgates do Whisper: ganha quem tiver MENOS palavras em
+    linha de confiança baixa, e qualquer falha é NÃO-FATAL.
+    O 4d (VAD mais sensível) não se aplica: o CTC não usa detecção de voz.
+    """
+    from pipeline.ctc_align import align_lyrics_ctc_to_audio, low_confidence_frac
 
-    _debug_log_path = out_path / "pipeline_debug.log"
-    _debug_log_path.write_text("", encoding="utf-8")
+    synced = Path(synced_lyrics_path) if synced_lyrics_path else None
+    debug_log("ETAPA 4 - iniciando alinhamento CTC global")
+    console.print(t("main.aligner_ctc"))
+    try:
+        word_timings = align_lyrics_ctc_to_audio(
+            stems.vocals, Path(lyrics_path), language, device, synced_lyrics_path=synced,
+        )
+    except Exception as e:
+        debug_log(f"ETAPA 4 - CTC falhou, caindo pro Whisper: {e!r}")
+        console.print(t("main.ctc_failed", err=e))
+        return None, stems
+    if word_timings is None:
+        debug_log("ETAPA 4 - letra fora do vocabulário do CTC, caindo pro Whisper")
+        console.print(t("main.ctc_unsupported"))
+        return None, stems
 
-    debug_log(f"Pipeline iniciada. PID={__import__('os').getpid()}")
-    debug_log(f"Python: {sys.executable}")
-    debug_log(
-        f"Args: url={url!r} file={file!r} title={title!r} artist={artist!r} "
-        f"out={out_dir!r} with_video={with_video}"
-    )
+    low = low_confidence_frac(word_timings)
+    debug_log(f"ETAPA 4 - CTC concluído. {len(word_timings)} palavras, {100 * low:.1f}% em linha de confiança baixa")
 
-    # Resolve o device de verdade (cai para CPU se não houver CUDA). Sem isso,
-    # máquinas sem GPU NVIDIA quebravam com "Torch not compiled with CUDA".
-    requested_device = device
-    device = resolve_device(device)
-    debug_log(f"Device solicitado={requested_device!r} -> efetivo={device!r}")
+    if low > CTC_RESCUE_LOW_FRAC and not duet:
+        console.print(t("main.ctc_rescue4b_try", pct=100 * low))
+        debug_log(f"ETAPA 4b (CTC) - resgate: low={low:.2f}, iniciando isolate_lead_vocal")
+        try:
+            lead_vocals = isolate_lead_vocal(stems.vocals, work_path / "lead_vocal")
+            retry = align_lyrics_ctc_to_audio(
+                lead_vocals, Path(lyrics_path), language, device, synced_lyrics_path=synced,
+            )
+            retry_low = low_confidence_frac(retry) if retry else 1.0
+            debug_log(f"ETAPA 4b (CTC) - baixa confiança: demucs={low:.3f} lead={retry_low:.3f}")
+            if retry and retry_low < low:
+                console.print(t("main.ctc_rescue_ok", before=100 * low, after=100 * retry_low))
+                word_timings, low = retry, retry_low
+            else:
+                console.print(t("main.ctc_rescue_no", before=100 * low, after=100 * retry_low))
+        except Exception as e:
+            debug_log(f"ETAPA 4b (CTC) - falhou (não-fatal): {e}")
+            console.print(t("main.rescue4b_fail", err=e))
 
-    # Põe o ffmpeg embutido no PATH ANTES da Etapa 4: o whisperx.load_audio e o
-    # pyannote chamam "ffmpeg" cru por subprocess, sem passar pelo ffmpeg_exe().
-    # Sem isto, quem não tem ffmpeg no PATH do sistema quebrava no alinhamento
-    # com FileNotFoundError [WinError 2], mesmo com o embutido presente.
-    ensure_ffmpeg_on_path()
+    if low * 100 > CTC_FAILED_PCT:
+        console.print(t("main.ctc_rescue4c_try", pct=100 * low))
+        debug_log(f"ETAPA 4c (CTC) - 2a separacao: low={low:.2f}")
+        try:
+            stems2 = separate_vocals(source.audio_wav, work_path / "stems_retry", device=device)
+            retry = align_lyrics_ctc_to_audio(
+                stems2.vocals, Path(lyrics_path), language, device, synced_lyrics_path=synced,
+            )
+            retry_low = low_confidence_frac(retry) if retry else 1.0
+            debug_log(f"ETAPA 4c (CTC) - baixa confiança: 1a={low:.3f} 2a={retry_low:.3f}")
+            if retry and retry_low < low:
+                console.print(t("main.ctc_rescue_ok", before=100 * low, after=100 * retry_low))
+                # o pitch tem que sair do MESMO stem que alinhou
+                word_timings, low, stems = retry, retry_low, stems2
+            else:
+                console.print(t("main.ctc_rescue_no", before=100 * low, after=100 * retry_low))
+        except Exception as e:
+            debug_log(f"ETAPA 4c (CTC) - falhou (não-fatal): {e}")
+            console.print(t("main.rescue4c_fail", err=e))
 
-    # Dueto: cruza a caixa com as tags P1:/P2: da letra e avisa se divergirem
-    # (as tags são sempre removidas do texto cantado, marque a caixa ou não).
-    tagged_lines = count_singer_tagged_lines(Path(lyrics_path))
-    if duet and tagged_lines == 0:
-        console.print(t("main.duet_no_tags"))
-    elif tagged_lines > 0 and not duet:
-        console.print(t("main.tags_no_duet"))
-    if device == "cpu" and requested_device != "cpu":
-        console.print(t("main.no_cuda"))
+    return word_timings, stems
 
-    console.rule(t("main.step1"))
-    debug_log("ETAPA 1 - iniciando get_source_audio")
-    source = get_source_audio(url, file, work_path / "raw", with_video=with_video,
-                               max_video_resolution=max_video_resolution)
-    debug_log(f"ETAPA 1 - concluída. audio={source.audio_wav} video={source.video_path}")
-    console.print(t("main.audio_at", path=source.audio_wav))
-    if source.video_path:
-        console.print(t("main.video_downloaded", path=source.video_path))
 
-    # Videoclipe de fundo para fonte LOCAL: o áudio do pacote continua sendo
-    # o arquivo do usuário (ex.: rip de CD, qualidade melhor que YouTube);
-    # o vídeo é só ilustração de fundo (#VIDEO). Com URL explícita usa ela;
-    # sem URL, busca o 1º resultado do YouTube por artista + título
-    # (geralmente o clipe oficial). NÃO-FATAL: sem vídeo, o pacote sai só
-    # com a capa - que já é o fallback natural do jogo.
-    if (bg_video or bg_video_url) and source.video_path is None:
-        query = (bg_video_url or "").strip() or f"ytsearch1:{artist} {title}"
-        console.print(t("main.bgvideo_downloading", query=query))
-        debug_log(f"ETAPA 1b - baixando videoclipe de fundo: {query}")
-        bg_path = download_background_video(query, work_path / "bgvideo")
-        if bg_path:
-            source.video_path = bg_path
-            debug_log(f"ETAPA 1b - concluída. video={bg_path}")
-            console.print(t("main.bgvideo_ok", path=bg_path))
-        else:
-            debug_log("ETAPA 1b - sem vídeo (falha não-fatal)")
-            console.print(t("main.bgvideo_fail"))
+def _report_ctc_alignment(word_timings) -> None:
+    """Resumo + aviso do caminho do CTC: quantas palavras em linha de confiança baixa."""
+    from pipeline.ctc_align import low_confidence_frac
 
-    console.rule(t("main.step2"))
-    debug_log("ETAPA 2 - iniciando separate_vocals")
-    stems = separate_vocals(source.audio_wav, work_path / "stems", device=device)
-    debug_log(f"ETAPA 2 - concluída. vocals={stems.vocals} instrumental={stems.instrumental}")
-    console.print(t("main.vocal_ok", path=stems.vocals))
-    console.print(t("main.instrumental_ok", path=stems.instrumental))
+    by_source = alignment_stats(word_timings)["by_source"]
+    console.print(t("main.words_done", n=len(word_timings)))
+    console.print(t("main.ctc_breakdown", ctc=by_source["ctc"], low=by_source["ctc_low"],
+                    interp=by_source["interpolated"]))
+    pct = 100 * low_confidence_frac(word_timings)
+    if pct > CTC_WARN_PCT:
+        console.print(t("main.ctc_low_warn", pct=pct))
+    if pct > CTC_FAILED_PCT:
+        console.print(t("main.align_failed_hint"))
+        debug_log(f"ALINHAMENTO CTC SUSPEITO: {pct:.1f}% em linha de confiança baixa")
 
-    console.rule(t("main.step3"))
-    debug_log("ETAPA 3 - iniciando detect_bpm")
-    grid = detect_bpm(stems.instrumental, manual_bpm)
-    debug_log(f"ETAPA 3 - concluída. bpm={grid.bpm}")
-    console.print(t("main.bpm_ok", bpm=grid.bpm))
-    if not manual_bpm:
-        console.print(t("main.bpm_auto_warn"))
 
-    console.rule(t("main.step4"))
+def _align_with_whisper(stems, source, work_path: Path, lyrics_path: str, language: str,
+                        device: str, duet: bool, whisper_model: str,
+                        synced_lyrics_path: str | None):
+    """
+    Etapa 4 pelo caminho do Whisper (align.align_lyrics_to_audio) + os resgates
+    4b/4d/4c. É o alinhador de antes do CTC global, e o fallback dele quando a
+    letra não cabe no vocabulário do MMS_FA (outro alfabeto) ou com
+    --aligner whisper. Devolve (word_timings, stems) - o 4c pode trocar os stems.
+    """
     debug_log("ETAPA 4 - iniciando align_lyrics_to_audio")
     # Transcrição pode ir para a CPU mesmo com o resto na GPU (GPU AMD/ROCm:
     # ver resolve_whisper_device). O tamanho do modelo segue o device REAL dela.
@@ -770,6 +787,12 @@ def run_pipeline(
             debug_log(f"ETAPA 4c - falhou (não-fatal): {e}")
             console.print(t("main.rescue4c_fail", err=e))
 
+
+    return word_timings, stems
+
+
+def _report_whisper_alignment(word_timings) -> None:
+    """Resumo por fonte + avisos (interpolação, reconhecimento baixo) do caminho do Whisper."""
     stats = alignment_stats(word_timings)
     by_source = stats["by_source"]
     interpolated_count = by_source["interpolated"]
@@ -826,6 +849,133 @@ def run_pipeline(
             console.print(t("main.recall_low", recall=100 * wrecall))
             console.print(t("main.recall_low_hint"))
             debug_log(f"WORD-RECALL BAIXO: {100*wrecall:.0f}% (âncoras podem estar erradas)")
+
+
+
+def run_pipeline(
+    url: str | None,
+    file: str | None,
+    lyrics_path: str,
+    title: str,
+    artist: str,
+    language: str,
+    out_dir: str,
+    manual_bpm: float | None,
+    manual_gap_ms: int,
+    device: str,
+    with_video: bool = False,
+    bg_video: bool = False,
+    bg_video_url: str | None = None,
+    clean_work: bool = False,
+    synced_lyrics_path: str | None = None,
+    with_stems: bool = False,
+    duet: bool = False,
+    backtrack: bool = False,
+    transpose: int = 0,
+    yarg_export: bool = False,
+    keep_harmonies: bool = False,
+    mp4_export: bool = False,
+    whisper_model: str = "auto",
+    romanize: bool = False,
+    audio_format: str = "ogg",
+    max_video_resolution: int = 0,
+    aligner: str = DEFAULT_ALIGNER,
+):
+    global _debug_log_path
+
+    out_path = Path(out_dir)
+    work_path = out_path / "_work"
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    _debug_log_path = out_path / "pipeline_debug.log"
+    _debug_log_path.write_text("", encoding="utf-8")
+
+    debug_log(f"Pipeline iniciada. PID={__import__('os').getpid()}")
+    debug_log(f"Python: {sys.executable}")
+    debug_log(
+        f"Args: url={url!r} file={file!r} title={title!r} artist={artist!r} "
+        f"out={out_dir!r} with_video={with_video}"
+    )
+
+    # Resolve o device de verdade (cai para CPU se não houver CUDA). Sem isso,
+    # máquinas sem GPU NVIDIA quebravam com "Torch not compiled with CUDA".
+    requested_device = device
+    device = resolve_device(device)
+    debug_log(f"Device solicitado={requested_device!r} -> efetivo={device!r}")
+
+    # Põe o ffmpeg embutido no PATH ANTES da Etapa 4: o whisperx.load_audio e o
+    # pyannote chamam "ffmpeg" cru por subprocess, sem passar pelo ffmpeg_exe().
+    # Sem isto, quem não tem ffmpeg no PATH do sistema quebrava no alinhamento
+    # com FileNotFoundError [WinError 2], mesmo com o embutido presente.
+    ensure_ffmpeg_on_path()
+
+    # Dueto: cruza a caixa com as tags P1:/P2: da letra e avisa se divergirem
+    # (as tags são sempre removidas do texto cantado, marque a caixa ou não).
+    tagged_lines = count_singer_tagged_lines(Path(lyrics_path))
+    if duet and tagged_lines == 0:
+        console.print(t("main.duet_no_tags"))
+    elif tagged_lines > 0 and not duet:
+        console.print(t("main.tags_no_duet"))
+    if device == "cpu" and requested_device != "cpu":
+        console.print(t("main.no_cuda"))
+
+    console.rule(t("main.step1"))
+    debug_log("ETAPA 1 - iniciando get_source_audio")
+    source = get_source_audio(url, file, work_path / "raw", with_video=with_video,
+                               max_video_resolution=max_video_resolution)
+    debug_log(f"ETAPA 1 - concluída. audio={source.audio_wav} video={source.video_path}")
+    console.print(t("main.audio_at", path=source.audio_wav))
+    if source.video_path:
+        console.print(t("main.video_downloaded", path=source.video_path))
+
+    # Videoclipe de fundo para fonte LOCAL: o áudio do pacote continua sendo
+    # o arquivo do usuário (ex.: rip de CD, qualidade melhor que YouTube);
+    # o vídeo é só ilustração de fundo (#VIDEO). Com URL explícita usa ela;
+    # sem URL, busca o 1º resultado do YouTube por artista + título
+    # (geralmente o clipe oficial). NÃO-FATAL: sem vídeo, o pacote sai só
+    # com a capa - que já é o fallback natural do jogo.
+    if (bg_video or bg_video_url) and source.video_path is None:
+        query = (bg_video_url or "").strip() or f"ytsearch1:{artist} {title}"
+        console.print(t("main.bgvideo_downloading", query=query))
+        debug_log(f"ETAPA 1b - baixando videoclipe de fundo: {query}")
+        bg_path = download_background_video(query, work_path / "bgvideo")
+        if bg_path:
+            source.video_path = bg_path
+            debug_log(f"ETAPA 1b - concluída. video={bg_path}")
+            console.print(t("main.bgvideo_ok", path=bg_path))
+        else:
+            debug_log("ETAPA 1b - sem vídeo (falha não-fatal)")
+            console.print(t("main.bgvideo_fail"))
+
+    console.rule(t("main.step2"))
+    debug_log("ETAPA 2 - iniciando separate_vocals")
+    stems = separate_vocals(source.audio_wav, work_path / "stems", device=device)
+    debug_log(f"ETAPA 2 - concluída. vocals={stems.vocals} instrumental={stems.instrumental}")
+    console.print(t("main.vocal_ok", path=stems.vocals))
+    console.print(t("main.instrumental_ok", path=stems.instrumental))
+
+    console.rule(t("main.step3"))
+    debug_log("ETAPA 3 - iniciando detect_bpm")
+    grid = detect_bpm(stems.instrumental, manual_bpm)
+    debug_log(f"ETAPA 3 - concluída. bpm={grid.bpm}")
+    console.print(t("main.bpm_ok", bpm=grid.bpm))
+    if not manual_bpm:
+        console.print(t("main.bpm_auto_warn"))
+
+    console.rule(t("main.step4"))
+    word_timings = None
+    if aligner == "ctc":
+        word_timings, stems = _align_with_ctc(
+            stems, source, work_path, lyrics_path, language, device, duet, synced_lyrics_path,
+        )
+    if word_timings is None:
+        word_timings, stems = _align_with_whisper(
+            stems, source, work_path, lyrics_path, language, device, duet, whisper_model,
+            synced_lyrics_path,
+        )
+        _report_whisper_alignment(word_timings)
+    else:
+        _report_ctc_alignment(word_timings)
 
     # Checagem de cobertura: avisa se a letra termina muito antes do áudio
     # (refrão repetido escrito só uma vez - erro comum de letras "(2x)").
@@ -1127,6 +1277,9 @@ if __name__ == "__main__":
     parser.add_argument("--whisper-model", default="auto",
                         choices=["auto", "medium", "large-v3", "large-v2", "small"],
                         help="Modelo de reconhecimento do alinhamento. auto = large-v3 em GPU NVIDIA com VRAM sobrando, senão medium (GPU AMD: medium)")
+    parser.add_argument("--aligner", default=DEFAULT_ALIGNER, choices=list(ALIGNERS),
+                        help="Alinhador letra<->áudio: ctc = letra inteira de uma vez (padrão; cai no whisper "
+                             "se a letra tiver outro alfabeto), whisper = transcrição livre + âncoras (o de antes)")
     parser.add_argument("--mp4-export", action="store_true", help="Renderiza também um vídeo de karaokê '<base> (Karaoke).mp4' (letra sincronizada gravada por cima do fundo)")
     parser.add_argument("--romanize", action="store_true", help="Reescreve o texto das notas em romaji (Hepburn) via pykakasi - para letras japonesas")
     parser.add_argument(
@@ -1173,6 +1326,7 @@ if __name__ == "__main__":
             synced_lyrics_path=args.synced_lyrics,
             audio_format=args.audio_format,
             max_video_resolution=args.max_video_resolution,
+            aligner=args.aligner,
         )
     except Exception:
         debug_log("EXCEÇÃO NÃO TRATADA:\n" + traceback.format_exc())

@@ -224,6 +224,9 @@ const STRINGS = {
       "O app reconheceu só {pct}% da letra na música — pode ter entendido outra coisa e " +
       "colocado as notas no lugar errado. Vale conferir a sincronia; se estiver ruim, gere de " +
       "novo (a separação da voz varia a cada tentativa) e confira se a letra bate com esta gravação.",
+    resultCtcLow:
+      "{pct}% das notas estão em linhas que o alinhador achou difíceis de ouvir (coro, " +
+      "vocal muito esticado ou processado) - vale conferir as linhas marcadas em vermelho na revisão.",
     resultReview: "Revisar alinhamento",
     resultReviewHint: "É a melhor forma de acertar trechos: você ajusta as notas sem gerar de novo, então conserta só o pedaço ruim sem mexer no que ficou bom.",
     resultOpenFolder: "Abrir pasta",
@@ -261,6 +264,7 @@ const STRINGS = {
     revDeleteGroup: "Excluir grupo",
     revLegendTiming: "Timing:",
     revLegendAnchor: "medido (exato)",
+    revLegendCtc: "medido",
     revLegendFuzzy: "medido (grafia≈)",
     revLegendRealign: "medido (2º passe)",
     revLegendInterp: "estimado — conferir",
@@ -286,6 +290,8 @@ const STRINGS = {
     revSourceRealign: "medida (2º passe na janela)",
     revSourceInterp: "ESTIMADA (interpolada) — conferir",
     revSourceLrc: "início de linha (.lrc sincronizado)",
+    revSourceCtc: "medida (letra inteira alinhada)",
+    revSourceCtcLow: "medida, mas numa linha de confiança baixa — conferir",
     revSaved: "Salvo: {path}",
     revWarnings: "Avisos de validação:",
     revNoAudio: "O arquivo de áudio do pacote não foi encontrado — a timeline funciona, mas sem playback.",
@@ -540,6 +546,9 @@ const STRINGS = {
       "The app only recognized {pct}% of the lyrics in the song — it may have heard something " +
       "else and placed the notes in the wrong spots. Worth checking the sync; if it's off, generate " +
       "again (the vocal separation varies between attempts) and check the lyrics match this recording.",
+    resultCtcLow:
+      "{pct}% of the notes are in lines the aligner found hard to hear (choir, heavily " +
+      "stretched or processed vocals) - worth checking the lines marked in red in the review.",
     resultReview: "Review alignment",
     resultReviewHint: "This is the best way to fix specific parts: you adjust the notes without generating again, so you fix only the bad bit without touching what came out good.",
     resultOpenFolder: "Open folder",
@@ -576,6 +585,7 @@ const STRINGS = {
     revDeleteGroup: "Delete group",
     revLegendTiming: "Timing:",
     revLegendAnchor: "measured (exact)",
+    revLegendCtc: "measured",
     revLegendFuzzy: "measured (spelling≈)",
     revLegendRealign: "measured (2nd pass)",
     revLegendInterp: "estimated — check",
@@ -601,6 +611,8 @@ const STRINGS = {
     revSourceRealign: "measured (2nd pass in window)",
     revSourceInterp: "ESTIMATED (interpolated) — check",
     revSourceLrc: "line start (synced .lrc)",
+    revSourceCtc: "measured (whole lyrics aligned)",
+    revSourceCtcLow: "measured, but in a low-confidence line — check",
     revSaved: "Saved: {path}",
     revWarnings: "Validation warnings:",
     revNoAudio: "The package's audio file was not found — the timeline works, but without playback.",

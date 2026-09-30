@@ -18,6 +18,7 @@ PROTOCOLO
 #      "keep_harmonies":...,
      "mp4_export":..., "romanize":...,
      "synced_lyrics_path":..., "audio_format":..., "max_video_resolution":...,
+     "aligner":...,
      "ui_lang":...}
     {"cmd":"shutdown"}  -> encerra o servidor.
 
@@ -137,6 +138,7 @@ def _run_one(job: dict) -> None:
                     synced_lyrics_path=job.get("synced_lyrics_path"),
                     audio_format=job.get("audio_format", "ogg"),
                     max_video_resolution=job.get("max_video_resolution", 0),
+                    aligner=job.get("aligner", pipeline_main.DEFAULT_ALIGNER),
                 )
             status_path.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
         except Exception as e:

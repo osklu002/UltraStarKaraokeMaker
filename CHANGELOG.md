@@ -6,6 +6,12 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+### Alterado
+
+- **A letra agora é alinhada ao áudio de uma vez, e não a partir do que o Whisper ouviu.** Até aqui, o alinhamento partia da transcrição do próprio Whisper e só usava a letra real para preencher o que ele não reconheceu - então, quando o Whisper entendia errado um refrão, ou um coro tomava a frente, a letra não tinha como corrigir. O novo alinhador encaixa a letra inteira no vocal numa passada só (um modelo de forced alignment MMS): toda palavra recebe um lugar medido na música e a ordem da letra é garantida. Medido contra charts feitos à mão, nos mesmos vocais separados, em duas amostras de 8 músicas (inglês e sueco): palavras a até 1 s do chart subiram de 0,867 para 0,966 e de 0,883 para 0,919; o erro típico de início caiu de 95 ms para 49 ms e 84 ms. No pior caso encontrado ("Nothing Else Matters") o caminho antigo punha quase toda palavra 39 s adiantada sem avisar nada. Também é bem mais rápido: a etapa de alinhamento leva segundos em vez de um minuto. Letras em outro alfabeto (japonês, coreano, russo...) continuam automaticamente no alinhamento pelo Whisper de antes.
+
+- **Linhas em que o alinhador não tem certeza ficam marcadas para revisão.** Cada linha recebe uma confiança do próprio alinhador; nas músicas de teste, as linhas marcadas como de confiança baixa contêm 85% das linhas que de fato estavam fora. Elas aparecem em vermelho na revisão (e o "pular para a próxima marcada" para nelas), a tela de resultado avisa quando mais de 10% da música está nessas linhas, e são elas que decidem quando os resgates (voz principal isolada, 2ª separação) rodam.
+
 ### Corrigido
 
 - **Numa fila, a primeira música num idioma diferente do da anterior falhava.** O erro era `'50359' is not a valid task`. O modelo de reconhecimento fica carregado entre as músicas da fila e, quando o idioma mudava, a biblioteca de onde ele vem refazia a configuração com um número interno onde esperava a palavra "transcribe". Agora o app sempre diz "transcribe" explicitamente, e o idioma pode mudar à vontade entre as músicas. Achado num lote de músicas em inglês seguidas de músicas em sueco: todas as suecas falhavam.
