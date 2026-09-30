@@ -28,6 +28,8 @@ HISTÓRICO DE DECISÕES E BUGS (resumo - detalhes nos módulos de cada etapa):
   escrito só uma vez (erro comum de letras com "(2x)"/"(4x)").
 - FASE 3: metadados (capa/ano/gênero) em cascata (arquivo -> MusicBrainz/CAA);
   e (complemento) suporte opcional a baixar o VÍDEO do YouTube para o pacote.
+- Etapa 4 (30/09/2026): alinhador padrão passa a ser o CTC global da letra
+  inteira (pipeline/ctc_align.py); o caminho do Whisper vira fallback.
 """
 
 from __future__ import annotations
@@ -97,7 +99,14 @@ ALIGNERS = ("ctc", "whisper")
 
 # Limiares do caminho CTC, sobre a fração de palavras em linha de confiança
 # baixa (ctc_align.low_confidence_frac) - o análogo do interp_frac do Whisper.
-CTC_RESCUE_LOW_FRAC = 0.10   # acima disto tenta a voz principal isolada (4b)
+# Acima disto tenta a voz principal isolada (4b). MEDIDO (30/09/2026, 16
+# músicas, 2 amostras): o stem isolado é ARRISCADO no CTC - numa música
+# "Skönheten Och Odjuret" ele derrubou o acerto de 1,00 pra 0,00 - mas a regra
+# "ganha quem tiver menos palavras em linha de confiança baixa" rejeitou todos
+# os stems catastróficos; saldo levemente positivo (+0,11 Scar Tissue, +0,04
+# Jag Ljuger Så Bra, -0,11 Kylie In Your Eyes). Com 0,10 o resgate (~3 min de
+# GPU) disparava em 11/16 músicas; com 0,20 em 7/16, com os mesmos ganhos.
+CTC_RESCUE_LOW_FRAC = 0.20
 CTC_WARN_PCT = 10.0          # acima disto avisa pra conferir as linhas marcadas
 CTC_FAILED_PCT = 50.0        # acima disto tenta a 2ª separação (4c) e sugere regerar
 

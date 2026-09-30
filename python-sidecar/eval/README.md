@@ -12,6 +12,7 @@ issue #2.
 | `usdx_parse.py` | UltraStar `.txt` reader (headers, notes, breaks, cp1252 fallback). P1/P2 duet blocks are flattened in time order. Time model: `time_s = GAP/1000 + beat*60/(BPM*4)`. Note lyrics keep their spaces — they mark word boundaries. |
 | `evaluate.py` | Time-domain scoring of a generated chart (`.txt` **or** `song_data.json`) against a gold `.txt`: note-count ratio, onset error, relative-pitch contour, lyric similarity. |
 | `library_replay.py` | Stage-level replay of USKMaker's own stages against a local gold library: whisperx alignment (word recall/onset error, interpolated fraction, lead-vocal rescue stats), SwiftF0 pitch inside gold note bounds, BPM vs gold `#BPM` (mod octave). Resumable, per-song caching, stratified sampling. |
+| `ab_align.py` | A/B of aligner variants (`ctc`, `whisper`, `hybrid`, `ctc@lead`, `...~dedup`, `...+snap`) on the **cached stems** of a finished `library_replay` run, printed next to that run's baseline. Run `library_replay.py` first with the same `--lib/--n/--seed`. Note: `library_replay` itself still measures the Whisper path (`align_lyrics_to_audio` + lead-vocal rescue). |
 | `seed_set.json` | The 7-song seed set agreed on issue #2, referenced **by name only**. |
 
 ## Copyright

@@ -146,8 +146,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "[bold cyan]Step 3/6 — Detecting BPM",
     },
     "main.step4": {
-        "pt": "[bold cyan]Etapa 4/6 — Alinhando letra ao áudio (WhisperX, âncora+interpolação)",
-        "en": "[bold cyan]Step 4/6 — Aligning lyrics to audio (WhisperX, anchor+interpolation)",
+        "pt": "[bold cyan]Etapa 4/6 — Alinhando letra ao áudio",
+        "en": "[bold cyan]Step 4/6 — Aligning lyrics to audio",
     },
     "main.step5": {
         "pt": "[bold cyan]Etapa 5/6 — Buscando metadados (capa, ano, gênero)",
