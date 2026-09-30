@@ -12,6 +12,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 - **Linhas em que o alinhador não tem certeza ficam marcadas para revisão.** Cada linha recebe uma confiança do próprio alinhador; nas músicas de teste, as linhas marcadas como de confiança baixa contêm 85% das linhas que de fato estavam fora. Elas aparecem em vermelho na revisão (e o "pular para a próxima marcada" para nelas), a tela de resultado avisa quando mais de 10% da música está nessas linhas, e são elas que decidem quando os resgates (voz principal isolada, 2ª separação) rodam.
 
+### Corrigido
+
+- **Numa fila, a primeira música num idioma diferente do da anterior falhava.** O erro era `'50359' is not a valid task`. O modelo de reconhecimento fica carregado entre as músicas da fila e, quando o idioma mudava, a biblioteca de onde ele vem refazia a configuração com um número interno onde esperava a palavra "transcribe". Agora o app sempre diz "transcribe" explicitamente, e o idioma pode mudar à vontade entre as músicas. Achado num lote de músicas em inglês seguidas de músicas em sueco: todas as suecas falhavam.
+
 ## [0.22.0] - 2026-09-29 (contribuição [@osklu002](https://github.com/osklu002))
 
 ### Adicionado
