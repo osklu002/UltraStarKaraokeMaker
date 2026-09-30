@@ -221,6 +221,51 @@ MELISMA_PITCH_TOLERANCE_ST = 2.0
 MELISMA_MIN_SYLLABLE_S = 0.45
 
 
+def merge_flat_continuations(
+    notes: list[Note],
+    phrase_breaks: list[int],
+    max_gap_beats: int,
+) -> tuple[list[Note], list[int]]:
+    """
+    Funde um "~" na nota anterior quando os dois têm o MESMO pitch (e o mesmo
+    tipo): uma continuação que não muda de nota não carrega melodia nenhuma, só
+    aparece na tela como "you~~~". Devolve (notas, phrase_breaks remapeados -
+    eles são índices de nota).
+
+    De onde vêm (medido 30/09/2026, "a-ha - Take On Me": 14,6% de "~" contra
+    4,0% no chart feito à mão): detect_melisma_notes parte a sílaba em toda
+    LACUNA de voz e nunca funde o trecho que começa numa lacuna (proteção do
+    caso "Ama De Mi Sol", ver lá). Em voz soprosa/falsete a leitura de pitch
+    falha por poucos quadros no meio da sustentação, e cada falha vira mais um
+    "~" - no mesmo pitch: "talking" [2, 2, 2], "me)" [-3, -3, -3, -3].
+
+    Só funde com lacuna < `max_gap_beats` entre as notas; lacuna maior fica
+    como está (pausa de verdade, ou a fronteira de palavra que aquela proteção
+    existe pra marcar). Nunca funde por cima de uma quebra de frase.
+    """
+    breaks = set(phrase_breaks)
+    out: list[Note] = []
+    new_index: list[int] = []  # índice antigo -> índice novo
+    for k, note in enumerate(notes):
+        prev = out[-1] if out else None
+        if (
+            prev is not None
+            and note.text.strip() == "~"
+            and note.pitch == prev.pitch
+            and note.note_type == prev.note_type
+            and not prev.text.endswith(" ")
+            and (k - 1) not in breaks
+            and note.start_beat - (prev.start_beat + prev.duration_beats) < max_gap_beats
+        ):
+            prev.duration_beats = note.start_beat + note.duration_beats - prev.start_beat
+            prev.text += note.text[len(note.text.rstrip()):]  # herda o espaço final
+            new_index.append(len(out) - 1)
+            continue
+        out.append(note)
+        new_index.append(len(out) - 1)
+    return out, sorted({new_index[b] for b in phrase_breaks})
+
+
 def detect_melisma_notes(
     track: PitchTrack,
     syl_start: float,
@@ -647,6 +692,12 @@ def build_notes(
     notes = fix_rounding_overlaps(notes)
     notes = snap_octave_outliers(notes)
     notes = fold_octave_outliers_to_context(notes)
+    # depois das correções de oitava (elas também deixam vizinhos iguais) e
+    # antes da dourada (que escolhe pelas notas mais longas)
+    notes, phrase_breaks = merge_flat_continuations(
+        notes, phrase_breaks,
+        max_gap_beats=max(1, round(MELISMA_MIN_EXTENSION_S * grid.bpm * 4 / 60.0)),
+    )
     notes = apply_golden_notes(notes, min_duration_beats=golden_min_beats(grid))
 
     return notes, phrase_breaks

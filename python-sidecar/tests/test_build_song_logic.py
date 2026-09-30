@@ -487,3 +487,41 @@ if __name__ == "__main__":
                 print(f"FALHOU: {name}: {e}")
     print("FALHAS:", failed)
     sys.exit(1 if failed else 0)
+
+
+# ---------------------------------------------------------------------------
+# merge_flat_continuations
+# ---------------------------------------------------------------------------
+
+from pipeline.build_song import merge_flat_continuations  # noqa: E402
+
+
+def _n(start, dur, pitch, text, kind=":"):
+    return Note(start_beat=start, duration_beats=dur, pitch=pitch, text=text, note_type=kind)
+
+
+def test_flat_continuations_fold_into_the_attack_note():
+    notes = [_n(0, 4, 2, "you"), _n(4, 4, 2, "~"), _n(9, 4, 2, "~ "), _n(14, 2, 5, "next ")]
+    out, breaks = merge_flat_continuations(notes, [3], max_gap_beats=3)
+    assert [(n.start_beat, n.duration_beats, n.text) for n in out] == [(0, 13, "you "), (14, 2, "next ")]
+    assert breaks == [1]
+
+
+def test_continuation_that_changes_pitch_is_kept():
+    notes = [_n(0, 4, 2, "you"), _n(4, 4, 4, "~"), _n(8, 4, 4, "~ ")]
+    out, _ = merge_flat_continuations(notes, [], max_gap_beats=3)
+    assert [(n.pitch, n.text) for n in out] == [(2, "you"), (4, "~ ")]
+
+
+def test_no_merge_across_long_gap_word_boundary_or_phrase_break():
+    long_gap = [_n(0, 4, 2, "ver"), _n(10, 4, 2, "~ ")]
+    assert len(merge_flat_continuations(long_gap, [], max_gap_beats=3)[0]) == 2
+    word_end = [_n(0, 4, 2, "ver "), _n(4, 4, 2, "~ ")]
+    assert len(merge_flat_continuations(word_end, [], max_gap_beats=3)[0]) == 2
+    line_end = [_n(0, 4, 2, "ver"), _n(4, 4, 2, "~ ")]
+    assert len(merge_flat_continuations(line_end, [0], max_gap_beats=3)[0]) == 2
+
+
+def test_freestyle_and_normal_are_not_mixed():
+    notes = [_n(0, 4, 2, "you"), _n(4, 4, 2, "~ ", kind="F")]
+    assert len(merge_flat_continuations(notes, [], max_gap_beats=3)[0]) == 2
