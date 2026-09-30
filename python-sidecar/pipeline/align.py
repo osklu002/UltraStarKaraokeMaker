@@ -1264,6 +1264,15 @@ def alignment_stats(timings: list[WordTiming]) -> dict:
 # stateless entre chamadas (transcribe/align não guardam estado da música
 # anterior), então cachear é seguro.
 _WHISPER_CACHE: dict = {}
+
+# Passado SEMPRE no `.transcribe()`. Sem ele, a 2ª música da fila num idioma
+# diferente da 1ª morre com "ValueError: '50359' is not a valid task": ao
+# trocar de idioma, o whisperx 3.8.7rc1 reconstrói o tokenizer com
+# `task = task or self.tokenizer.task`, só que o `.task` do tokenizer do
+# faster-whisper é o ID do token (50359), não a string "transcribe".
+# Reproduzido 30/09/2026 (modelo cacheado: en ok, sv falha; carga nova em sv
+# ok) - pegou as 3 músicas suecas de um lote do harness depois de 5 em inglês.
+WHISPER_TASK = "transcribe"
 _ALIGN_CACHE: dict = {}
 
 
@@ -1276,6 +1285,8 @@ def _get_whisper_model(size: str, device: str, compute_type: str, language: str 
     trocar de idioma entre músicas da MESMA fila não recarrega o modelo (caro,
     ~GB) - o `.transcribe(..., language=...)` de cada chamada já reconstrói o
     tokenizer sozinho quando o idioma muda (whisperx/asr.py, FasterWhisperPipeline.transcribe).
+    MAS só se a chamada passar `task="transcribe"` explícito - ver
+    WHISPER_TASK logo abaixo.
 
     `vad_options` (onset/offset da detecção de voz do pyannote) É DIFERENTE:
     fica gravado no objeto da pipeline em `load_model()` e o `.transcribe()`
@@ -1344,7 +1355,7 @@ def align_lyrics_to_audio(
     #    confiança para o que ele acertar.
     whisper_model = _get_whisper_model(whisper_model_size, whisper_device, compute_type, language, vad_options)
     audio = whisperx.load_audio(str(vocals_wav))
-    transcription = whisper_model.transcribe(audio, language=language)
+    transcription = whisper_model.transcribe(audio, language=language, task=WHISPER_TASK)
 
     # 2) Alinha a transcrição PRÓPRIA do Whisper (não a letra real) - dá
     #    timestamps precisos para tudo que foi efetivamente reconhecido.
