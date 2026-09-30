@@ -6,6 +6,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+### Corrigido
+
+- **Numa fila, a primeira música num idioma diferente do da anterior falhava.** O erro era `'50359' is not a valid task`. O modelo de reconhecimento fica carregado entre as músicas da fila e, quando o idioma mudava, a biblioteca de onde ele vem refazia a configuração com um número interno onde esperava a palavra "transcribe". Agora o app sempre diz "transcribe" explicitamente, e o idioma pode mudar à vontade entre as músicas. Achado num lote de músicas em inglês seguidas de músicas em sueco: todas as suecas falhavam.
+
 ## [0.22.0] - 2026-09-29 (contribuição [@osklu002](https://github.com/osklu002))
 
 ### Adicionado

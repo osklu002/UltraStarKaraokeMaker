@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **In a queue, the first song in a different language than the one before it failed.** The error was `'50359' is not a valid task`. The recognition model is kept loaded between songs of a queue, and when the language changed the library it comes from rebuilt its settings with an internal number where it expected the word "transcribe". The app now always says "transcribe" explicitly, so the language can change freely between songs. Found when a batch of English songs followed by Swedish ones failed on every Swedish song.
+
 ## [0.21.3] — 2026-09-25 (contribution by [@DJ-Joel](https://github.com/DJ-Joel))
 
 ### Fixed
