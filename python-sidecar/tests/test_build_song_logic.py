@@ -119,7 +119,10 @@ def test_melisma_merges_brief_pitch_blip():
     pitch_hz = [220.0] * 6 + [500.0] + [220.0] * 5
     track = _track(timestamps, pitch_hz=pitch_hz, voicing=[True] * len(timestamps))
 
-    runs = detect_melisma_notes(track, 0.0, 0.6, min_extension_s=0.15)
+    # min_syllable explícito: o teste é da proteção de lacuna, não do limiar
+    # de duração (recalibrado pra 0,80 s em 01/10/2026)
+    runs = detect_melisma_notes(track, 0.0, 0.6, min_extension_s=0.15,
+                                min_syllable_duration_for_melisma=0.45)
 
     # o blip de 1 quadro não sobrevive como run isolado
     assert all((end - start) >= 0.0 for start, end in runs)
@@ -150,7 +153,10 @@ def test_melisma_gap_split_survives_even_when_short():
     timestamps = first_half + tiny_tail_after_gap
     track = _track(timestamps, pitch_hz=[220.0] * len(timestamps), voicing=[True] * len(timestamps))
 
-    runs = detect_melisma_notes(track, 0.0, 0.6, min_extension_s=0.15)
+    # min_syllable explícito: o teste é da proteção de lacuna, não do limiar
+    # de duração (recalibrado pra 0,80 s em 01/10/2026)
+    runs = detect_melisma_notes(track, 0.0, 0.6, min_extension_s=0.15,
+                                min_syllable_duration_for_melisma=0.45)
 
     assert len(runs) == 2, "run curto NÃO deve ser fundido de volta quando a fronteira é uma lacuna de voz"
 

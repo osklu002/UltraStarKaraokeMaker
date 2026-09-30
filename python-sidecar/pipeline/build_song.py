@@ -216,9 +216,18 @@ def allocate_syllable_durations(
 # Diferença que FICA e é esperada: 14% dos charts à mão não têm "~" nenhum
 # (charter que não usa a convenção); nós sempre produzimos algum, porque
 # medimos variação de pitch real. Não é erro - é o limite de medir vs. estilo.
+#
+# RECALIBRAÇÃO (01/10/2026): com as sílabas medidas pelo CTC (ver
+# ctc_syllable_spans) e a divisão silábica por idioma, as primeiras sílabas
+# de cada palavra ficaram mais longas e o "~" voltou a subir: 8,9% das notas
+# (charts à mão desta biblioteca en/sv: 3,6%). Varredura dos três limiares em
+# 24 músicas (16 de ajuste + 8 guardadas). Quem manda é a duração mínima da
+# sílaba: 0,45 -> 0,80 s leva o "~" a 4,7% (guardadas: 11,3% -> 6,9%, charts
+# 2,7%) sem custo real na precisão das notas (F1 0,873 -> 0,879; guardadas
+# 0,829 -> 0,824). Tolerância e extensão mudaram pouco na varredura e ficam.
 MELISMA_MIN_EXTENSION_S = 0.25
 MELISMA_PITCH_TOLERANCE_ST = 2.0
-MELISMA_MIN_SYLLABLE_S = 0.45
+MELISMA_MIN_SYLLABLE_S = 0.80
 
 
 # FIM DA PALAVRA SEGUINDO A VOZ (30/09/2026) - o alinhamento CTC marca o fim da
