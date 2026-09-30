@@ -13,6 +13,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 ### Corrigido
 
 - **"Não consegui ler os dados do vídeo" nunca dizia o motivo.** A leitura engolia qualquer erro. Agora avisa quando o YouTube pede login (e sugere ligar a opção de cookies) ou quando não deu para ler os cookies do navegador.
+- **Downloads do YouTube logado falhavam com "The page needs to be reloaded".** O yt-dlp resolve os desafios JavaScript do YouTube com o Deno mais um pacote pequeno, o `yt-dlp-ejs`, que o setup nunca instalava. Agora o yt-dlp é instalado (e atualizado) como `yt-dlp[default]`, que o inclui. Achado com a nova opção de cookies: o mesmo vídeo passou assim que o pacote entrou.
 - **No Linux, o Deno que o setup instala nunca era usado.** O yt-dlp precisa de um runtime JavaScript para o YouTube, e sem ele o YouTube recusa mais pedidos. O setup põe o Deno na pasta `bin` do app, mas essa pasta só entrava no `PATH` junto com um ffmpeg embutido, que no Linux normalmente não existe. Agora ela entra sempre que existe.
 
 ## [0.23.2] - 2026-10-01 (contribuição [@osklu002](https://github.com/osklu002))

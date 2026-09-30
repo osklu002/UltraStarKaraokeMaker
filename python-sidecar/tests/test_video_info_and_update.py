@@ -173,6 +173,13 @@ def test_quem_esta_no_estavel_continua_no_estavel():
     assert "--prerelease" not in cmd
 
 
+def test_os_dois_canais_trazem_o_resolvedor_de_desafios():
+    """yt-dlp[default] traz o yt-dlp-ejs; sem ele o YouTube logado responde
+    "The page needs to be reloaded" (01/10/2026)."""
+    for pre in (False, True):
+        assert "yt-dlp[default]" in build_upgrade_command("uv.exe", "py.exe", prerelease=pre)
+
+
 def test_o_comando_atualiza_o_venv_certo():
     cmd = build_upgrade_command("uv.exe", "C:/venv/python.exe", prerelease=False)
     assert "--python" in cmd

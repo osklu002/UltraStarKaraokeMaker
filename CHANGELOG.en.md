@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - **"Could not read the video info" never said why.** The lookup swallowed every error. It now tells you when YouTube wants a sign-in (and to turn on the cookies option), or when the browser's cookies could not be read.
+- **Signed-in YouTube downloads failed with "The page needs to be reloaded".** yt-dlp solves YouTube's JavaScript challenges with Deno plus a small solver package, `yt-dlp-ejs`, which the setup never installed. yt-dlp is now installed (and updated) as `yt-dlp[default]`, which includes it. Found with the new cookies option: the same video went through as soon as the package was in.
 - **On Linux, the Deno that the setup installs was never used.** yt-dlp needs a JavaScript runtime for YouTube, and without one YouTube refuses more requests. The setup puts Deno in the app's `bin` folder, but that folder only reached the `PATH` together with a bundled ffmpeg, which Linux normally doesn't have. It is now always added when it exists.
 
 ## [0.23.2] — 2026-10-01 (contribution by [@osklu002](https://github.com/osklu002))
