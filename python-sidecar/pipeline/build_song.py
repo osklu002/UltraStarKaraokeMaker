@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .align import WordTiming
+from .align import SOURCE_CTC, SOURCE_CTC_LOW, WordTiming
 from .beatgrid import BeatGrid
 from .i18n import t
 from .pitch import PitchExtractor, PitchTrack
@@ -219,6 +219,64 @@ def allocate_syllable_durations(
 MELISMA_MIN_EXTENSION_S = 0.25
 MELISMA_PITCH_TOLERANCE_ST = 2.0
 MELISMA_MIN_SYLLABLE_S = 0.45
+
+
+# FIM DA PALAVRA SEGUINDO A VOZ (30/09/2026) - o alinhamento CTC marca o fim da
+# palavra no último quadro em que ele "vê" a letra, e numa vogal sustentada o
+# modelo (treinado em fala) larga a letra antes da voz parar. MEDIDO contra
+# charts feitos à mão (16 músicas, 3401 palavras bem colocadas): em média o fim
+# do CTC está certo (+23 ms), mas nas palavras que o chart segura >= 1 s o fim
+# sai 155 ms cedo na mediana, e metade delas > 150 ms cedo.
+#
+# A correção só ESTICA (nunca encurta): segue a voz (quadros vozeados do pitch
+# track) depois do fim, tolerando falha curta, até SUSTAIN_MAX_EXTENSION_S e
+# parando SUSTAIN_GAP_BEFORE_NEXT_S antes da próxima palavra - e só quando há
+# pelo menos SUSTAIN_MIN_ROOM_S até ela (esticar tudo passava do ponto: palavra
+# curta já termina um pouco TARDE, +43 ms). Ajustado numa amostra de 8 músicas
+# e conferido noutra: erro mediano do fim 89 -> 84 ms e 86 -> 72 ms; palavras
+# longas terminando > 150 ms cedo 46% -> 35% e 54% -> 36%.
+SUSTAIN_MIN_ROOM_S = 0.15
+SUSTAIN_GAP_BEFORE_NEXT_S = 0.10
+SUSTAIN_MAX_EXTENSION_S = 0.40
+SUSTAIN_MAX_HOLE_S = 0.04
+
+
+def sustain_limit(word_end: float, next_start: float | None) -> float | None:
+    """
+    Até onde o fim da palavra pode ir seguindo a voz, ou None se não há espaço
+    (a próxima palavra vem logo em seguida).
+    """
+    if next_start is not None and next_start - word_end < SUSTAIN_MIN_ROOM_S:
+        return None
+    limit = word_end + SUSTAIN_MAX_EXTENSION_S
+    if next_start is not None:
+        limit = min(limit, next_start - SUSTAIN_GAP_BEFORE_NEXT_S)
+    return limit if limit > word_end else None
+
+
+def extend_end_while_voiced(track: PitchTrack, word_end: float, limit: float) -> float:
+    """
+    Novo fim da palavra: o último quadro vozeado depois de `word_end` (antes de
+    `limit`), atravessando falhas de voz de até SUSTAIN_MAX_HOLE_S. Nunca
+    devolve menos que `word_end`.
+    """
+    ts = track.timestamps
+    if ts.size < 2:
+        return word_end
+    dt = float(np.median(np.diff(ts)))
+    order = np.argsort(ts)
+    ts, voiced = ts[order], track.voicing[order]
+    i = int(np.searchsorted(ts, word_end))
+    new_end, hole = word_end, 0.0
+    while i < ts.size and ts[i] < limit:
+        if voiced[i]:
+            new_end, hole = float(ts[i]) + dt, 0.0
+        else:
+            hole += dt
+            if hole > SUSTAIN_MAX_HOLE_S:
+                break
+        i += 1
+    return max(word_end, min(new_end, limit))
 
 
 def merge_flat_continuations(
@@ -633,7 +691,7 @@ def build_notes(
     notes: list[Note] = []
     phrase_breaks: list[int] = []
 
-    for wt in word_timings:
+    for idx, wt in enumerate(word_timings):
         syllables = split_word_syllables(wt.word)
         # sílabas 100% pontuação (ex.: um "'" isolado por espaço na letra)
         # não têm conteúdo cantável e não devem virar nota própria.
@@ -641,7 +699,18 @@ def build_notes(
 
         if syllables:
             word_start, word_end = wt.start, max(wt.start + 0.01, wt.end)
-            track = pitch_extractor.extract_word_track(str(vocals_wav_path), word_start, word_end)
+            # Palavra do CTC: o fim pode seguir a voz (ver SUSTAIN_*). A MESMA
+            # leitura de pitch cobre o trecho extra - só a janela fica maior.
+            limit = None
+            if wt.source in (SOURCE_CTC, SOURCE_CTC_LOW):
+                nxt = word_timings[idx + 1].start if idx + 1 < len(word_timings) else None
+                limit = sustain_limit(word_end, nxt)
+            track = pitch_extractor.extract_word_track(str(vocals_wav_path), word_start, limit or word_end)
+            # Sílabas e melisma saem do trecho ORIGINAL da palavra; a cauda
+            # sustentada só alonga a ÚLTIMA nota dela (ver o fim do laço). Se a
+            # cauda entrasse no melisma, a queda de tom do fim da nota virava
+            # mais "~": medido, 7,2% -> 9,3% de "~" nas mesmas 16 músicas.
+            sustained_end = extend_end_while_voiced(track, word_end, limit) if limit is not None else word_end
             syllable_spans = allocate_syllable_durations(track, len(syllables), word_start, word_end)
 
             for i, (syl, (syl_start, syl_end)) in enumerate(zip(syllables, syllable_spans)):
@@ -684,6 +753,10 @@ def build_notes(
                     )
 
                 if is_last_syllable_of_word:
+                    if sustained_end > word_end:
+                        end_beat = grid.seconds_to_beat(sustained_end, gap_ms)
+                        notes[-1].duration_beats = max(notes[-1].duration_beats,
+                                                       end_beat - notes[-1].start_beat)
                     notes[-1].text += " "
 
         if wt.is_line_end and notes:

@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -525,3 +526,42 @@ def test_no_merge_across_long_gap_word_boundary_or_phrase_break():
 def test_freestyle_and_normal_are_not_mixed():
     notes = [_n(0, 4, 2, "you"), _n(4, 4, 2, "~ ", kind="F")]
     assert len(merge_flat_continuations(notes, [], max_gap_beats=3)[0]) == 2
+
+
+# ---------------------------------------------------------------------------
+# fim da palavra seguindo a voz (SUSTAIN_*)
+# ---------------------------------------------------------------------------
+
+from pipeline.build_song import extend_end_while_voiced, sustain_limit  # noqa: E402
+
+
+def _voiced_track(t0, t1, voiced_until, holes=(), hop=0.01):
+    ts = np.arange(t0, t1, hop)
+    v = ts < voiced_until
+    for a, b in holes:
+        v[(ts >= a) & (ts < b)] = False
+    return PitchTrack(timestamps=ts, pitch_hz=np.full(ts.size, 220.0),
+                      confidence=v.astype(float), voicing=v)
+
+
+def test_sustain_limit_needs_room_and_stops_before_next_word():
+    assert sustain_limit(1.0, 1.10) is None            # next word right after
+    assert sustain_limit(1.0, 1.30) == pytest.approx(1.20)  # next - gap
+    assert sustain_limit(1.0, 5.0) == pytest.approx(1.40)   # capped
+    assert sustain_limit(1.0, None) == pytest.approx(1.40)  # last word
+
+
+def test_end_follows_the_voice_up_to_the_limit():
+    tr = _voiced_track(0.5, 2.0, voiced_until=1.25)
+    assert extend_end_while_voiced(tr, 1.0, 1.40) == pytest.approx(1.25, abs=0.011)
+    tr = _voiced_track(0.5, 2.0, voiced_until=1.9)
+    assert extend_end_while_voiced(tr, 1.0, 1.40) == pytest.approx(1.40)
+
+
+def test_end_crosses_short_dropout_but_not_long_silence_and_never_shrinks():
+    tr = _voiced_track(0.5, 2.0, voiced_until=1.30, holes=[(1.10, 1.13)])
+    assert extend_end_while_voiced(tr, 1.0, 1.40) == pytest.approx(1.30, abs=0.011)
+    tr = _voiced_track(0.5, 2.0, voiced_until=1.30, holes=[(1.05, 1.15)])
+    assert extend_end_while_voiced(tr, 1.0, 1.40) == pytest.approx(1.05, abs=0.011)
+    tr = _voiced_track(0.5, 2.0, voiced_until=0.8)
+    assert extend_end_while_voiced(tr, 1.0, 1.40) == 1.0
