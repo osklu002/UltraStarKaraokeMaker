@@ -692,7 +692,14 @@ def run_song(song: dict, run_dir: str, device: str) -> None:
 # Sobe quando o CONTEÚDO do manifesto muda de semântica (ex.: buckets de idioma
 # pt/ja) - senão um manifesto cacheado com o schema velho é reusado calado e a
 # mudança não pega. Bumpar aqui força o rescan da biblioteca.
-_MANIFEST_SCHEMA = 2
+# 3: + "lang" (o código do idioma do chart; lang_group só tem os buckets)
+_MANIFEST_SCHEMA = 3
+
+
+def in_lang(song: dict, lang: str) -> bool:
+    """`--lang`: um bucket (lang_group) ou o código exato do idioma (ex. sv,
+    que fica no bucket "other")."""
+    return song["lang_group"] == lang or song.get("lang") == lang
 
 
 def build_manifest(lib: str, runs_root: str) -> list[dict]:
@@ -725,6 +732,7 @@ def build_manifest(lib: str, runs_root: str) -> list[dict]:
             code = normalize_language(chart.language) or "other"
             out.append({"name": s["name"], "mp3": s["mp3"], "gold": s["gold"],
                         "lang_group": code if code in BUCKET_LANGS else "other",
+                        "lang": code,
                         "wpm": round(len(gw) / (span / 60), 1)})
         except Exception:  # noqa: BLE001 - unparseable gold: not usable
             continue
@@ -909,8 +917,9 @@ def main() -> int:
     # Um lote de UM idioma só. Amostragem estratificada dá poucas músicas dos
     # buckets pequenos (pt é 108/1427 => ~5 num n=60), e cinco músicas não
     # concluem nada. Com --lang o bucket vira o universo e a amostra é dele.
-    ap.add_argument("--lang", default=None, choices=list(REPORT_LANGS),
-                    help="mede só um bucket de idioma (ex.: --lang pt)")
+    ap.add_argument("--lang", default=None,
+                    help="mede só um bucket de idioma (ex.: --lang pt) ou um "
+                         "idioma pelo código (ex.: --lang sv)")
     args = ap.parse_args()
 
     # Mesmo guarda do app (main.py:_prefer_safe_ct2_allocator_on_hip): em GPU
@@ -926,7 +935,7 @@ def main() -> int:
         return 2
 
     if args.lang:
-        manifest = [s for s in manifest if s["lang_group"] == args.lang]
+        manifest = [s for s in manifest if in_lang(s, args.lang)]
         log(f"filtro de idioma: {args.lang} -> {len(manifest)} músicas no universo")
         if not manifest:
             log(f"nenhuma música no bucket {args.lang}")
