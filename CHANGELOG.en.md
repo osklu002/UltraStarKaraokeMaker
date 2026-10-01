@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Songs with accented letters in the artist or title were invisible in UltraStar Deluxe.** UltraStar Deluxe 2026.8.1 (the Flatpak) silently skips a song whose folder or file names contain a letter outside ASCII - nothing in the log, even with `-Debug`; a file-access trace showed it never even opens such a folder. "Oskar Linnros - Från och med Du" did not show up; renamed to ASCII, it loaded. Folder and file names now get plain letters: "Från" becomes "Fran", "Açaí" "Acai", "Ø" "O", "ß" "ss", and the curly apostrophe a straight one. `#TITLE` and `#ARTIST` inside the `.txt` keep the accents, so the game still shows the real title. Packages generated before this keep their old folder; generating one of those songs again creates a new folder with the plain name next to it.
+
 ## [0.23.2] — 2026-10-01 (contribution by [@osklu002](https://github.com/osklu002))
 
 ### Fixed

@@ -6,6 +6,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+### Corrigido
+
+- **Músicas com acento no artista ou no título não apareciam no UltraStar Deluxe.** O UltraStar Deluxe 2026.8.1 (o Flatpak) ignora calado a música cuja pasta ou arquivo tem letra fora do ASCII - nada no log, nem com `-Debug`; um trace de acesso a arquivos mostrou que ele nem abre a pasta. "Oskar Linnros - Från och med Du" não aparecia; renomeada para ASCII, carregou. Os nomes de pasta e de arquivo agora levam letras simples: "Från" vira "Fran", "Açaí" "Acai", "Ø" "O", "ß" "ss", e o apóstrofo curvo vira reto. O `#TITLE` e o `#ARTIST` dentro do `.txt` continuam com acento, então o jogo mostra o título de verdade. Pacotes gerados antes disto ficam com a pasta antiga; gerar uma dessas músicas de novo cria, ao lado, uma pasta nova com o nome simples.
+
 ## [0.23.2] - 2026-10-01 (contribuição [@osklu002](https://github.com/osklu002))
 
 ### Corrigido

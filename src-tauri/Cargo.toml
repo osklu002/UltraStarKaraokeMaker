@@ -20,6 +20,8 @@ tauri-plugin-dialog = "2"
 tauri-plugin-http = "~2.7"  # mesma série do @tauri-apps/plugin-http no npm (o CLI recusa versões desalinhadas)
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-notification = "2"
+# NFKD para tirar o acento dos nomes de pasta/arquivo (ver fold_to_ascii)
+unicode-normalization = "0.1"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

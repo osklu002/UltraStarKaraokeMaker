@@ -22,12 +22,22 @@ ferramenta que baixa/nomeia os milhares de charts do USDB. Copiar a
 convenção dele não é só evitar o crash - é fazer nossas pastas casarem com
 as da comunidade ("AC-DC", não "AC_DC").
 
+ACENTOS (bug real, 01/10/2026): o UltraStar Deluxe 2026.8.1 (Flatpak) ignora
+calado a música cuja pasta ou arquivo tem letra fora do ASCII - "Oskar
+Linnros - Från och med Du" não aparecia no jogo, sem nada no log nem com
+-Debug; um trace de acesso a arquivos mostrou que ele nem abre a pasta.
+Renomeada para ASCII, carrega. Por isso o acento sai do NOME: NFKD, tira as
+marcas combinantes, e regras explícitas para o que o NFKD não decompõe
+(ø, æ, ß, ’).
+
 ATENÇÃO: isto é SÓ para nome de arquivo. O texto do usuário vai intacto pros
 headers #TITLE/#ARTIST e pras buscas de metadado (sanitizar "AC/DC" numa
 query do MusicBrainz quebraria a busca).
 """
 
 from __future__ import annotations
+
+import unicodedata
 
 # (caracteres, substituto) - mesma tabela do usdb_syncer.
 # '?', ':' e '"' somem; '<' '>' viram parênteses; separadores e curinga viram
@@ -39,6 +49,19 @@ _REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ("/\\|*", "-"),
 )
 
+# Letras que o NFKD não decompõe em base + acento. Mesma tabela do
+# fold_to_ascii no main.rs.
+_FOLDS = {"ø": "o", "Ø": "O", "æ": "ae", "Æ": "AE", "ß": "ss", "ẞ": "SS",
+          "’": "'", "‘": "'"}
+
+
+def fold_to_ascii(name: str) -> str:
+    """Letra acentuada -> letra simples ("Från" -> "Fran", "Açaí" -> "Acai").
+    O que não tem leitura latina (outros alfabetos) passa como está."""
+    name = "".join(_FOLDS.get(c, c) for c in name)
+    return "".join(c for c in unicodedata.normalize("NFKD", name)
+                   if not unicodedata.combining(c))
+
 
 def sanitize_filename(name: str) -> str:
     """
@@ -47,12 +70,16 @@ def sanitize_filename(name: str) -> str:
     "AC/DC - T.N.T."  -> "AC-DC - T.N.T"
     "Rita Lee - Quem?" -> "Rita Lee - Quem"
     "Blur - Song 2: Live" -> "Blur - Song 2 Live"
+    "Oskar Linnros - Från och med Du" -> "Oskar Linnros - Fran och med Du"
 
     Precisa dar exatamente o mesmo resultado que `sanitize_path_component` no
     src-tauri/src/main.rs - o Rust cria a pasta e procura o .txt pelo nome, e
     o Python cria os arquivos dentro. Se as duas divergirem, o app gera o
     pacote e não acha o próprio arquivo.
     """
+    # ANTES das trocas: o NFKD também transforma formas de compatibilidade,
+    # e a barra de largura total "／" vira "/" - que a tabela troca por hífen
+    name = fold_to_ascii(name)
     for chars, replacement in _REPLACEMENTS:
         for char in chars:
             name = name.replace(char, replacement)

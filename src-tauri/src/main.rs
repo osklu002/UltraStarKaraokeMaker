@@ -157,8 +157,11 @@ fn tr_err(lang: &str, key: &str, e: &impl std::fmt::Display) -> String {
 /// do USDB): '?' ':' '"' somem, '<' '>' viram parênteses, separadores e
 /// curinga viram hífen. Assim "AC/DC" vira "AC-DC" (a convenção da
 /// comunidade), não "AC_DC".
+///
+/// E o acento sai antes (fold_to_ascii): o UltraStar Deluxe 2026.8.1
+/// (Flatpak) ignora calado pasta ou arquivo com letra fora do ASCII.
 fn sanitize_path_component(s: &str) -> String {
-    let cleaned: String = s
+    let cleaned: String = fold_to_ascii(s)
         .chars()
         .filter(|c| !matches!(c, '?' | ':' | '"'))
         .map(|c| match c {
@@ -176,6 +179,31 @@ fn sanitize_path_component(s: &str) -> String {
     } else {
         cleaned
     }
+}
+
+/// Letra acentuada -> letra simples ("Från" -> "Fran", "Açaí" -> "Acai"):
+/// NFKD, depois sai toda marca combinante (classe combinante canônica != 0,
+/// o mesmo teste do `unicodedata.combining` do Python), com regras explícitas
+/// para o que o NFKD não decompõe. Mesma tabela do fold_to_ascii em
+/// python-sidecar/pipeline/filenames.py.
+fn fold_to_ascii(s: &str) -> String {
+    use unicode_normalization::char::canonical_combining_class;
+    use unicode_normalization::UnicodeNormalization;
+
+    let mut folded = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            'ø' => folded.push('o'),
+            'Ø' => folded.push('O'),
+            'æ' => folded.push_str("ae"),
+            'Æ' => folded.push_str("AE"),
+            'ß' => folded.push_str("ss"),
+            'ẞ' => folded.push_str("SS"),
+            '’' | '‘' => folded.push('\''),
+            c => folded.push(c),
+        }
+    }
+    folded.nfkd().filter(|c| canonical_combining_class(*c) == 0).collect()
 }
 
 #[derive(Debug, Deserialize)]
@@ -1575,12 +1603,38 @@ mod sanitize_tests {
     }
 
     #[test]
-    fn nome_normal_e_acentos_passam_intactos() {
+    fn nome_normal_passa_intacto() {
         assert_eq!(
             sanitize_path_component("Rita Lee - Sangue Latino"),
             "Rita Lee - Sangue Latino"
         );
-        assert_eq!(sanitize_path_component("Djavan - Açaí"), "Djavan - Açaí");
+    }
+
+    // Espelho de ACENTOS_PARA_ASCII em test_filenames_logic.py: mesmas
+    // entradas, mesmas saídas.
+    const ACENTOS_PARA_ASCII: &[(&str, &str)] = &[
+        ("Oskar Linnros - Från och med Du", "Oskar Linnros - Fran och med Du"),
+        ("Djavan - Açaí", "Djavan - Acai"),
+        ("Björk - Jóga", "Bjork - Joga"),
+        ("Die Ärzte - Männer sind Schweine", "Die Arzte - Manner sind Schweine"),
+        ("Sigur Rós - Ágætis byrjun", "Sigur Ros - Agaetis byrjun"),
+        ("MØ - Lean On", "MO - Lean On"),
+        ("Mø - Final Song", "Mo - Final Song"),
+        ("Æ - Straße ẞ", "AE - Strasse SS"),
+        ("Don’t Stop ‘Me’", "Don't Stop 'Me'"),
+        // forma de compatibilidade: NFKD antes da tabela, a barra larga vira hífen
+        ("ＡＣ／ＤＣ", "AC-DC"),
+    ];
+
+    #[test]
+    fn acentos_viram_ascii() {
+        // o UltraStar Deluxe (Flatpak 2026.8.1) ignora calado pasta/arquivo
+        // com letra fora do ASCII
+        for (raw, expected) in ACENTOS_PARA_ASCII {
+            let out = sanitize_path_component(raw);
+            assert_eq!(&out, expected, "entrada: {raw}");
+            assert!(out.is_ascii(), "{out}");
+        }
     }
 
     #[test]
