@@ -38,10 +38,9 @@ def test_data_bin_dir_goes_on_path_without_bundled_ffmpeg(monkeypatch, tmp_path)
     # Linux: ffmpeg from the distro (no USKMAKER_FFMPEG), Deno installed by the
     # setup in <data>/bin - that folder must still reach the PATH.
     (tmp_path / "USKMaker" / "bin").mkdir(parents=True)
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     monkeypatch.delenv("USKMAKER_FFMPEG", raising=False)
     monkeypatch.setenv("PATH", "/usr/bin")
-    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setattr(proc_utils, "data_dir", lambda: tmp_path / "USKMaker")
     proc_utils.ensure_ffmpeg_on_path()
     parts = os.environ["PATH"].split(os.pathsep)
     assert parts[0] == str(tmp_path / "USKMaker" / "bin")
@@ -50,10 +49,9 @@ def test_data_bin_dir_goes_on_path_without_bundled_ffmpeg(monkeypatch, tmp_path)
 
 
 def test_missing_bin_dir_leaves_path_alone(monkeypatch, tmp_path):
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))  # no USKMaker/bin inside
     monkeypatch.delenv("USKMAKER_FFMPEG", raising=False)
     monkeypatch.setenv("PATH", "/usr/bin")
-    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setattr(proc_utils, "data_dir", lambda: tmp_path / "USKMaker")
     proc_utils.ensure_ffmpeg_on_path()
     assert os.environ["PATH"] == "/usr/bin"
 

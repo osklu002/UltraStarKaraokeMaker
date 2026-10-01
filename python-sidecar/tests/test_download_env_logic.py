@@ -57,12 +57,18 @@ def test_ffmpeg_location_ainda_e_passado_quando_ha_embutido():
 def _run_with_env(ffmpeg_val, path_val, fn):
     old_ff = os.environ.get("USKMAKER_FFMPEG")
     old_path = os.environ.get("PATH")
+    old_local = os.environ.get("LOCALAPPDATA")
+    old_xdg = os.environ.get("XDG_DATA_HOME")
+    old_home = os.environ.get("HOME")
     try:
         if ffmpeg_val is None:
             os.environ.pop("USKMAKER_FFMPEG", None)
         else:
             os.environ["USKMAKER_FFMPEG"] = ffmpeg_val
         os.environ["PATH"] = path_val
+        os.environ.pop("LOCALAPPDATA", None)
+        os.environ.pop("XDG_DATA_HOME", None)
+        os.environ.pop("HOME", None)
         fn()
         return os.environ.get("PATH")
     finally:
@@ -72,6 +78,12 @@ def _run_with_env(ffmpeg_val, path_val, fn):
             os.environ["USKMAKER_FFMPEG"] = old_ff
         if old_path is not None:
             os.environ["PATH"] = old_path
+        if old_local is not None:
+            os.environ["LOCALAPPDATA"] = old_local
+        if old_xdg is not None:
+            os.environ["XDG_DATA_HOME"] = old_xdg
+        if old_home is not None:
+            os.environ["HOME"] = old_home
 
 
 # Caminhos montados com os.path.join/os.pathsep: com barra invertida fixa

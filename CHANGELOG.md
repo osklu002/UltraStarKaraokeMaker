@@ -5,6 +5,9 @@ Todas as mudanças relevantes do USKMaker. *(English: [CHANGELOG.en.md](CHANGELO
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o projeto usa [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
+
+## [0.24.0] - 2026-10-01 (contribuição [@osklu002](https://github.com/osklu002))
+
 ### Adicionado
 
 - **Pacotes para Linux: `.deb`, `.rpm` e AppImage.** Até agora, quem usa Linux precisava compilar o app a partir do código. O build no Linux agora gera os três, e um novo workflow de CI (`build-linux.yml`) os monta a cada push e os anexa aos releases com tag, ao lado do instalador do Windows. O `.deb` e o `.rpm` puxam o ffmpeg da distribuição (o `.rpm` pede `/usr/bin/ffmpeg`, então o `ffmpeg-free` do próprio Fedora basta). Montado no Ubuntu 22.04, o AppImage também roda em distribuições de 2022 para cá. O ambiente de IA é configurado como no Windows, pelo botão **"Configurar ambiente de IA"** (`setup-sidecar.sh`). O README ganhou os passos de instalação no Linux (fecha o #15).
