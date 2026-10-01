@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **The cover could come from a compilation album.** "Oskar Linnros - Från och med Du" got the cover of "Absolute Summer Hits 2010". MusicBrainz lists 13 releases of that recording, 9 of them "Various Artists" compilations, and the app simply took the oldest - where a date with only the year ("2010") even counted as earlier than "2010-05-10", so the compilation beat both the artist's single and album. Releases are now ranked: the artist's own before compilations, official before withdrawn, studio before live (unless the song only exists live), album before single before EP, then the oldest, with a partial date counting as the end of its period. The search also looks at up to 100 recordings instead of 10 - with 10, the original album of "Eye of the Tiger" or "Dancing Queen" wasn't even among the candidates. The year is now the album's first release, not the chosen edition's ("Nothing Else Matters": 1991, not the 2021 reissue). iTunes, the next source, also skips "Various Artists" results. Checked on 9 songs: all now get the artist's own album.
+
 ## [0.24.0] — 2026-10-01 (contribution by [@osklu002](https://github.com/osklu002))
 
 ### Added

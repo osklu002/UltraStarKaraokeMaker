@@ -201,13 +201,23 @@ def _mb_find_release_mbid(artist: str, title: str) -> str | None:
     Isso não afeta o caso em que o arquivo já traz o ano correto embutido
     (a cascata sempre prioriza o arquivo), mas melhora o resultado quando
     o MusicBrainz é a única fonte de ano disponível.
+
+    COLETÂNEAS (bug real, 01/10/2026): "Oskar Linnros - Från och med Du"
+    saiu com a capa de "Absolute Summer Hits 2010". Das 13 releases da
+    gravação, 9 eram coletâneas de "Various Artists", e "o mais antigo" não
+    as separava - pior, a data só com ano ("2010") ordenava como texto antes
+    de "2010-05-10", então a coletânea ganhou do single e do álbum do próprio
+    artista. A escolha agora é por _release_rank (ver lá), entre as
+    releases de até 100 gravações: com 10, o álbum original de "Eye of the
+    Tiger" e de "Dancing Queen" nem estava entre as candidatas (as primeiras
+    gravações eram ao vivo e de coletânea).
     """
     _respect_mb_rate_limit()
     query = f'recording:"{title}" AND artist:"{artist}"'
     try:
         resp = requests.get(
             f"{_MB_BASE}/recording",
-            params={"query": query, "fmt": "json", "limit": 10},
+            params={"query": query, "fmt": "json", "limit": 100},
             headers={"User-Agent": _USER_AGENT},
             timeout=_HTTP_TIMEOUT,
         )
@@ -217,39 +227,64 @@ def _mb_find_release_mbid(artist: str, title: str) -> str | None:
         print(t("metadata.mb_search_failed", err=e))
         return None
 
-    # Coleta todos os releases candidatos (de todas as gravações retornadas),
-    # com sua data quando disponível. A busca de 'recording' já traz um
-    # resumo de cada release embutido, incluindo o campo 'date'.
-    candidates: list[tuple[str, str]] = []  # (mbid, date_str)
-    fallback_mbid: str | None = None
-    for rec in data.get("recordings", []):
-        for release in rec.get("releases", []):
-            mbid = release.get("id")
-            if not mbid:
-                continue
-            if fallback_mbid is None:
-                fallback_mbid = mbid  # primeiro visto, usado se nenhum tiver data
-            date_str = release.get("date") or ""
-            if date_str:
-                candidates.append((mbid, date_str))
+    return _pick_release_mbid(data.get("recordings", []))
 
-    if candidates:
-        # ordena por data (string ISO "AAAA-MM-DD" ordena cronologicamente
-        # como texto) e pega o mais antigo
-        candidates.sort(key=lambda c: c[1])
-        return candidates[0][0]
 
-    # nenhum release tinha data - cai no primeiro visto (melhor que nada)
-    return fallback_mbid
+# Tipos secundários de release-group que não são lançamento do artista: a
+# capa seria a da coletânea, não a do álbum/single.
+_MB_COMPILATION_TYPES = {"compilation", "dj-mix", "mixtape/street"}
+_MB_PRIMARY_RANK = {"album": 0, "single": 1, "ep": 2}
+
+
+def _release_rank(release: dict) -> tuple:
+    """
+    Chave de ordenação de um release (menor = melhor):
+      1. do próprio artista antes de coletânea (tipo secundário Compilation
+         etc., ou creditado a "Various Artists");
+      2. oficial antes de não oficial (Withdrawn, Bootleg...);
+      3. de estúdio antes de ao vivo: "Nothing Else Matters" tem centenas de
+         gravações ao vivo, e a de 1993 ganhava do álbum de 1991 pela data.
+         Quando a gravação só existe ao vivo (Raimundos, "MTV ao Vivo"), o
+         ao vivo continua sendo escolhido - só não passa na frente;
+      4. álbum, depois single, depois EP, depois o resto - a capa do álbum é
+         a que o karaokê costuma usar;
+      5. o mais antigo (a regra de antes: o lançamento original, não o
+         relançamento). Data só com ano/mês vale como o FIM do período, para
+         "2010" não passar na frente de "2010-05-10"; sem data, por último.
+    """
+    rg = release.get("release-group") or {}
+    secondary = {x.lower() for x in rg.get("secondary-types") or []}
+    credit = "".join((c.get("name") or "") + (c.get("joinphrase") or "")
+                     for c in release.get("artist-credit") or [])
+    compilation = bool(secondary & _MB_COMPILATION_TYPES) or credit.strip().lower() == "various artists"
+    official = (release.get("status") or "official").lower() == "official"
+    live = "live" in secondary
+    primary = _MB_PRIMARY_RANK.get((rg.get("primary-type") or "").lower(), len(_MB_PRIMARY_RANK))
+    date = release.get("date") or ""
+    date_key = (date + "-99-99")[:10] if date else "9999-99-99"
+    return (compilation, not official, live, primary, date_key)
+
+
+def _pick_release_mbid(recordings: list[dict]) -> str | None:
+    """MBID do melhor release (_release_rank) entre os das gravações."""
+    releases = [rel for rec in recordings for rel in rec.get("releases") or [] if rel.get("id")]
+    if not releases:
+        return None
+    return min(releases, key=_release_rank)["id"]
 
 
 def _mb_fetch_year_genre(release_mbid: str) -> tuple[int | None, str | None]:
-    """Busca ano e gênero de um release específico no MusicBrainz."""
+    """
+    Busca ano e gênero de um release específico no MusicBrainz. O ano é o
+    do PRIMEIRO lançamento do release-group, não o do release: a release
+    escolhida pode ser uma reedição ("Metallica", reedição de 2021 - o
+    álbum é de 1991).
+    """
     _respect_mb_rate_limit()
     try:
         resp = requests.get(
             f"{_MB_BASE}/release/{release_mbid}",
-            params={"fmt": "json", "inc": "genres"},
+            params={"fmt": "json", "inc": "genres+release-groups"},
             headers={"User-Agent": _USER_AGENT},
             timeout=_HTTP_TIMEOUT,
         )
@@ -260,8 +295,7 @@ def _mb_fetch_year_genre(release_mbid: str) -> tuple[int | None, str | None]:
         return None, None
 
     year = None
-    date = data.get("date") or ""
-    import re
+    date = (data.get("release-group") or {}).get("first-release-date") or data.get("date") or ""
     m = re.search(r"\d{4}", date)
     if m:
         year = int(m.group())
@@ -319,11 +353,20 @@ def _itunes_search(artist: str, title: str) -> dict | None:
             timeout=_HTTP_TIMEOUT,
         )
         resp.raise_for_status()
-        results = resp.json().get("results") or []
-        return results[0] if results else None
+        return _pick_itunes_result(resp.json().get("results") or [])
     except Exception as e:
         print(t("metadata.itunes_failed", err=e))
         return None
+
+
+def _pick_itunes_result(results: list[dict]) -> dict | None:
+    """O primeiro resultado que não é de coletânea (o iTunes marca a faixa de
+    coletânea com collectionArtistName "Various Artists"); se só houver
+    coletânea, o primeiro mesmo - a capa errada ainda é melhor que nenhuma."""
+    for r in results:
+        if (r.get("collectionArtistName") or "").strip().lower() != "various artists":
+            return r
+    return results[0] if results else None
 
 
 def _itunes_fill(meta: SongMetadata, artist: str, title: str, out_cover_path: Path) -> bool:

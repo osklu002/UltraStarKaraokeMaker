@@ -6,6 +6,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+### Corrigido
+
+- **A capa podia vir de uma coletânea.** "Oskar Linnros - Från och med Du" saiu com a capa de "Absolute Summer Hits 2010". O MusicBrainz lista 13 releases dessa gravação, 9 delas coletâneas de "Various Artists", e o app simplesmente pegava a mais antiga - e uma data só com o ano ("2010") ainda contava como anterior a "2010-05-10", então a coletânea ganhava do single e do álbum do próprio artista. As releases agora são ordenadas: as do próprio artista antes das coletâneas, oficiais antes das retiradas, de estúdio antes das ao vivo (a não ser que a música só exista ao vivo), álbum antes de single antes de EP, e então a mais antiga, com a data parcial valendo como o fim do período. A busca também olha até 100 gravações em vez de 10 - com 10, o álbum original de "Eye of the Tiger" ou de "Dancing Queen" nem estava entre as candidatas. O ano agora é o do primeiro lançamento do álbum, não o da edição escolhida ("Nothing Else Matters": 1991, não a reedição de 2021). O iTunes, a fonte seguinte, também pula resultados de "Various Artists". Conferido em 9 músicas: todas agora pegam o álbum do próprio artista.
+
 ## [0.24.0] - 2026-10-01 (contribuição [@osklu002](https://github.com/osklu002))
 
 ### Adicionado
