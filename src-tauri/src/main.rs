@@ -1758,8 +1758,11 @@ mod analyze_tests {
 /// entre as dezenas que o LRCLIB costuma ter para a mesma música.
 /// Irmão do read_audio_tags (arquivo local); mesma promessa de nunca falhar
 /// ruidosamente - devolve {} e a interface segue como antes.
+/// `async` + tokio: um comando Tauri sem `async` roda na THREAD PRINCIPAL, a
+/// mesma que desenha a janela - esperar o Python aqui congelava a interface
+/// enquanto o YouTube respondia (segundos; um download de vídeo, bem mais).
 #[tauri::command]
-fn fetch_video_info(
+async fn fetch_video_info(
     app: tauri::AppHandle,
     url: String,
     lang: String,
@@ -1767,12 +1770,12 @@ fn fetch_video_info(
     let (code_dir, python_exe) = resolve_sidecar(&app, &lang)?;
     let script = code_dir.join("read_video_info.py");
 
-    let mut cmd = std::process::Command::new(&python_exe);
+    let mut cmd = Command::new(&python_exe);
     cmd.arg(&script).arg(&url);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let output = cmd.output().map_err(|e| e.to_string())?;
+    let output = cmd.output().await.map_err(|e| e.to_string())?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(serde_json::from_str(stdout.trim()).unwrap_or_else(|_| serde_json::json!({})))
 }
@@ -1809,8 +1812,11 @@ async fn update_ytdlp(app: tauri::AppHandle, lang: String) -> Result<serde_json:
 /// Roda o leitor leve `read_tags.py` (só mutagen) no python do sidecar e
 /// devolve o JSON como está. É uma conveniência: se o ambiente ainda não foi
 /// configurado (sem venv) ou algo falhar, o frontend simplesmente ignora.
+/// `async` + tokio: um comando Tauri sem `async` roda na THREAD PRINCIPAL, a
+/// mesma que desenha a janela - esperar o Python aqui congelava a interface
+/// enquanto o YouTube respondia (segundos; um download de vídeo, bem mais).
 #[tauri::command]
-fn read_audio_tags(
+async fn read_audio_tags(
     app: tauri::AppHandle,
     path: String,
     lang: String,
@@ -1818,12 +1824,12 @@ fn read_audio_tags(
     let (code_dir, python_exe) = resolve_sidecar(&app, &lang)?;
     let script = code_dir.join("read_tags.py");
 
-    let mut cmd = std::process::Command::new(&python_exe);
+    let mut cmd = Command::new(&python_exe);
     cmd.arg(&script).arg(&path);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let output = cmd.output().map_err(|e| tr_err(&lang, "read_tags", &e))?;
+    let output = cmd.output().await.map_err(|e| tr_err(&lang, "read_tags", &e))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     // read_tags.py nunca sai com traceback (imprime {} em erro); mesmo assim,
     // se a saída não for JSON válido, devolvemos um objeto vazio.
@@ -1834,8 +1840,11 @@ fn read_audio_tags(
 /// Roda o script leve `fetch_assets.py` (só rede, sem GPU/sidecar). `want` é
 /// "cover,bg,video" (subconjunto). Devolve o JSON do script
 /// ({cover,bg,video,errors}); a UI mostra o que veio e o que falhou.
+/// `async` + tokio: um comando Tauri sem `async` roda na THREAD PRINCIPAL, a
+/// mesma que desenha a janela - esperar o Python aqui congelava a interface
+/// enquanto o YouTube respondia (segundos; um download de vídeo, bem mais).
 #[tauri::command]
-fn fetch_package_assets(
+async fn fetch_package_assets(
     app: tauri::AppHandle,
     dir: String,
     title: String,
@@ -1846,7 +1855,7 @@ fn fetch_package_assets(
     let (code_dir, python_exe) = resolve_sidecar(&app, &lang)?;
     let script = code_dir.join("fetch_assets.py");
 
-    let mut cmd = std::process::Command::new(&python_exe);
+    let mut cmd = Command::new(&python_exe);
     cmd.arg(&script)
         .arg("--out-dir").arg(&dir)
         .arg("--title").arg(&title)
@@ -1855,7 +1864,7 @@ fn fetch_package_assets(
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let output = cmd.output().map_err(|e| tr_err(&lang, "fetch_assets", &e))?;
+    let output = cmd.output().await.map_err(|e| tr_err(&lang, "fetch_assets", &e))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     serde_json::from_str(stdout.trim()).map_err(|_| {
         // Sem JSON válido: o script morreu antes de imprimir (ex.: venv/import).
