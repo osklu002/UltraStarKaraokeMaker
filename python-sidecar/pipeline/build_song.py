@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .align import WordTiming
+from .align import SOURCE_CTC, SOURCE_CTC_LOW, WordTiming
 from .beatgrid import BeatGrid
 from .i18n import t
 from .pitch import PitchExtractor, PitchTrack
@@ -216,9 +216,102 @@ def allocate_syllable_durations(
 # Diferença que FICA e é esperada: 14% dos charts à mão não têm "~" nenhum
 # (charter que não usa a convenção); nós sempre produzimos algum, porque
 # medimos variação de pitch real. Não é erro - é o limite de medir vs. estilo.
+#
+# RECALIBRAÇÃO (01/10/2026): com as sílabas medidas pelo CTC (ver
+# ctc_syllable_spans) e a divisão silábica por idioma, as primeiras sílabas
+# de cada palavra ficaram mais longas e o "~" voltou a subir: 8,9% das notas
+# (charts à mão desta biblioteca en/sv: 3,6%). Varredura dos três limiares em
+# 24 músicas (16 de ajuste + 8 guardadas). Quem manda é a duração mínima da
+# sílaba: 0,45 -> 0,80 s leva o "~" a 4,7% (guardadas: 11,3% -> 6,9%, charts
+# 2,7%) sem custo real na precisão das notas (F1 0,873 -> 0,879; guardadas
+# 0,829 -> 0,824). Tolerância e extensão mudaram pouco na varredura e ficam.
 MELISMA_MIN_EXTENSION_S = 0.25
 MELISMA_PITCH_TOLERANCE_ST = 2.0
-MELISMA_MIN_SYLLABLE_S = 0.45
+MELISMA_MIN_SYLLABLE_S = 0.80
+
+
+# FIM DA PALAVRA SEGUINDO A VOZ (30/09/2026) - o alinhamento CTC marca o fim da
+# palavra no último quadro em que ele "vê" a letra, e numa vogal sustentada o
+# modelo (treinado em fala) larga a letra antes da voz parar. MEDIDO contra
+# charts feitos à mão (16 músicas, 3401 palavras bem colocadas): em média o fim
+# do CTC está certo (+23 ms), mas nas palavras que o chart segura >= 1 s o fim
+# sai 155 ms cedo na mediana, e metade delas > 150 ms cedo.
+#
+# A correção só ESTICA (nunca encurta): segue a voz (quadros vozeados do pitch
+# track) depois do fim, tolerando falha curta, até SUSTAIN_MAX_EXTENSION_S e
+# parando SUSTAIN_GAP_BEFORE_NEXT_S antes da próxima palavra - e só quando há
+# pelo menos SUSTAIN_MIN_ROOM_S até ela (esticar tudo passava do ponto: palavra
+# curta já termina um pouco TARDE, +43 ms). Ajustado numa amostra de 8 músicas
+# e conferido noutra: erro mediano do fim 89 -> 84 ms e 86 -> 72 ms; palavras
+# longas terminando > 150 ms cedo 46% -> 35% e 54% -> 36%.
+SUSTAIN_MIN_ROOM_S = 0.15
+SUSTAIN_GAP_BEFORE_NEXT_S = 0.10
+SUSTAIN_MAX_EXTENSION_S = 0.40
+SUSTAIN_MAX_HOLE_S = 0.04
+
+
+def sustain_limit(word_end: float, next_start: float | None) -> float | None:
+    """
+    Até onde o fim da palavra pode ir seguindo a voz, ou None se não há espaço
+    (a próxima palavra vem logo em seguida).
+    """
+    if next_start is not None and next_start - word_end < SUSTAIN_MIN_ROOM_S:
+        return None
+    limit = word_end + SUSTAIN_MAX_EXTENSION_S
+    if next_start is not None:
+        limit = min(limit, next_start - SUSTAIN_GAP_BEFORE_NEXT_S)
+    return limit if limit > word_end else None
+
+
+def extend_end_while_voiced(track: PitchTrack, word_end: float, limit: float) -> float:
+    """
+    Novo fim da palavra: o último quadro vozeado depois de `word_end` (antes de
+    `limit`), atravessando falhas de voz de até SUSTAIN_MAX_HOLE_S. Nunca
+    devolve menos que `word_end`.
+    """
+    ts = track.timestamps
+    if ts.size < 2:
+        return word_end
+    dt = float(np.median(np.diff(ts)))
+    order = np.argsort(ts)
+    ts, voiced = ts[order], track.voicing[order]
+    i = int(np.searchsorted(ts, word_end))
+    new_end, hole = word_end, 0.0
+    while i < ts.size and ts[i] < limit:
+        if voiced[i]:
+            new_end, hole = float(ts[i]) + dt, 0.0
+        else:
+            hole += dt
+            if hole > SUSTAIN_MAX_HOLE_S:
+                break
+        i += 1
+    return max(word_end, min(new_end, limit))
+
+
+# Duração mínima de uma sílaba vinda do alinhamento por letra do CTC; abaixo
+# disso a divisão medida é tratada como suspeita e cai na de energia/pitch.
+CTC_SYLLABLE_MIN_S = 0.03
+
+
+def ctc_syllable_spans(
+    starts: list[float] | None,
+    num_syllables: int,
+    word_start: float,
+    word_end: float,
+) -> list[tuple[float, float]] | None:
+    """
+    Trechos das sílabas a partir dos inícios MEDIDOS pelo CTC (1ª letra de
+    cada sílaba, WordTiming.syllable_starts). A 1ª sílaba começa no início da
+    palavra e a última vai até o fim dela. None quando não dá pra confiar
+    (contagem diferente, fora da palavra, sílaba curta demais) - aí vale a
+    divisão por energia/pitch de allocate_syllable_durations.
+    """
+    if not starts or len(starts) != num_syllables or num_syllables < 2:
+        return None
+    bounds = [word_start] + list(starts[1:]) + [word_end]
+    if any(b - a < CTC_SYLLABLE_MIN_S for a, b in zip(bounds, bounds[1:])):
+        return None
+    return [(bounds[i], bounds[i + 1]) for i in range(num_syllables)]
 
 
 def merge_flat_continuations(
@@ -618,6 +711,7 @@ def build_notes(
     grid: BeatGrid,
     gap_ms: int,
     pitch_extractor: PitchExtractor,
+    language: str | None = None,
 ) -> tuple[list[Note], list[int]]:
     """
     Retorna (notes, phrase_breaks_after_index).
@@ -633,16 +727,30 @@ def build_notes(
     notes: list[Note] = []
     phrase_breaks: list[int] = []
 
-    for wt in word_timings:
-        syllables = split_word_syllables(wt.word)
+    for idx, wt in enumerate(word_timings):
+        syllables = split_word_syllables(wt.word, language)
         # sílabas 100% pontuação (ex.: um "'" isolado por espaço na letra)
         # não têm conteúdo cantável e não devem virar nota própria.
         syllables = [s for s in syllables if any(c.isalnum() for c in s)]
 
         if syllables:
             word_start, word_end = wt.start, max(wt.start + 0.01, wt.end)
-            track = pitch_extractor.extract_word_track(str(vocals_wav_path), word_start, word_end)
-            syllable_spans = allocate_syllable_durations(track, len(syllables), word_start, word_end)
+            # Palavra do CTC: o fim pode seguir a voz (ver SUSTAIN_*). A MESMA
+            # leitura de pitch cobre o trecho extra - só a janela fica maior.
+            limit = None
+            if wt.source in (SOURCE_CTC, SOURCE_CTC_LOW):
+                nxt = word_timings[idx + 1].start if idx + 1 < len(word_timings) else None
+                limit = sustain_limit(word_end, nxt)
+            track = pitch_extractor.extract_word_track(str(vocals_wav_path), word_start, limit or word_end)
+            # Sílabas e melisma saem do trecho ORIGINAL da palavra; a cauda
+            # sustentada só alonga a ÚLTIMA nota dela (ver o fim do laço). Se a
+            # cauda entrasse no melisma, a queda de tom do fim da nota virava
+            # mais "~": medido, 7,2% -> 9,3% de "~" nas mesmas 16 músicas.
+            sustained_end = extend_end_while_voiced(track, word_end, limit) if limit is not None else word_end
+            syllable_spans = (
+                ctc_syllable_spans(wt.syllable_starts, len(syllables), word_start, word_end)
+                or allocate_syllable_durations(track, len(syllables), word_start, word_end)
+            )
 
             for i, (syl, (syl_start, syl_end)) in enumerate(zip(syllables, syllable_spans)):
                 is_last_syllable_of_word = (i == len(syllables) - 1)
@@ -684,6 +792,10 @@ def build_notes(
                     )
 
                 if is_last_syllable_of_word:
+                    if sustained_end > word_end:
+                        end_beat = grid.seconds_to_beat(sustained_end, gap_ms)
+                        notes[-1].duration_beats = max(notes[-1].duration_beats,
+                                                       end_beat - notes[-1].start_beat)
                     notes[-1].text += " "
 
         if wt.is_line_end and notes:
@@ -736,7 +848,8 @@ def build_song(
     first_start = min((wt.start for wt in word_timings), default=0.0)
     effective_gap_ms = round_gap_ms(max(0, round(first_start * 1000)) + gap_ms)
 
-    notes, phrase_breaks = build_notes(word_timings, vocals_wav_path, grid, effective_gap_ms, pitch_extractor)
+    notes, phrase_breaks = build_notes(word_timings, vocals_wav_path, grid, effective_gap_ms, pitch_extractor,
+                                       language=language)
 
     # Tom fixo: transpõe a melodia inteira N semitons, uniforme, DEPOIS de toda
     # a estimativa/dobra de pitch. Casa com o áudio deslocado pelo mesmo N em

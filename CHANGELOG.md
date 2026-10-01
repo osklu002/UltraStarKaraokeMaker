@@ -6,6 +6,18 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+### Alterado
+
+- **Músicas em que o novo alinhador fica em dúvida agora usam o alinhador anterior.** Numa terceira amostra de 8 músicas, o alinhador da letra inteira da 0.23.0 errou feio em algumas - "Heart of Glass" ficou com as palavras a 20 s do lugar, na mediana, e o rap rápido de "Super Bass" também saiu errado - enquanto o alinhador anterior, pelo Whisper, dava conta delas. São justamente as músicas em que o próprio novo alinhador marca a maior parte das linhas como de confiança baixa: ordenando por essa fração, 24 músicas de teste se separam limpo, sem nenhuma entre 24% e 43%. Acima de 35% o app agora volta sozinho para o alinhador anterior. Palavras a até 1 s de charts feitos à mão, mediana das 24 músicas: alinhador anterior 0,867, novo alinhador sempre 0,919, novo alinhador com este retorno 0,936.
+
+- **Notas sustentadas agora duram o quanto são cantadas.** O alinhador tende a encerrar cedo uma palavra sustentada - ele para de "ouvir" as letras antes de a voz parar de fato -, então notas longas saíam curtas: palavras que os charts feitos à mão seguram por mais de um segundo terminavam 0,15 s antes, na mediana. A última nota de cada palavra agora acompanha a voz (a leitura de tom) por até 0,4 s, e só quando há espaço antes da palavra seguinte; nunca fica mais curta. Em 24 músicas as notas cobrem bem melhor o tempo cantado (sobreposição com os charts feitos à mão 0,712 → 0,744, e 0,669 → 0,704 numa amostra que não foi usada para ajustar), sem notas `~` a mais.
+
+- **As sílabas dentro de uma palavra agora caem onde são cantadas.** Palavras de várias sílabas eram divididas estimando as fronteiras pelo volume e pelo tom da voz. O alinhador já sabe quando cada letra é cantada, então cada sílaba agora começa onde a primeira letra dela foi alinhada. Inícios de sílaba a até 50 ms dos charts feitos à mão: 0,28 → 0,41, e 0,40 → 0,50 numa amostra que não foi usada para ajustar.
+
+- **Palavras em inglês e sueco são divididas em sílabas com as regras do próprio idioma.** Todo idioma usava o dicionário do português do Brasil, que divide demais as palavras em inglês ("lo-ve"); cada sílaba a mais é uma nota a mais. Medido contra a divisão dos charts feitos à mão de uma biblioteca de ~500 músicas: palavras em inglês divididas igual ao chart 0,78 → 0,85 (e sílabas a mais 13,6% → 0,5%), em sueco 0,89 → 0,91. "gonna", "wanna" e "gotta" são cantados em duas sílabas. Os outros idiomas não mudam.
+
+- **Menos notas `~`.** Uma sílaba agora precisa durar pelo menos 0,8 s (antes 0,45 s) para poder virar notas de continuação `~`. Com a nova divisão silábica, o `~` tinha subido para cerca de 9% das notas contra 3,6% nos charts feitos à mão; agora fica em cerca de 4,7% (6,9% nas músicas que não foram usadas para ajustar), sem mudar a precisão das notas.
+
 ## [0.23.2] - 2026-10-01 (contribuição [@osklu002](https://github.com/osklu002))
 
 ### Corrigido

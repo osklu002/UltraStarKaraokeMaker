@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Songs the new aligner is unsure about now use the previous aligner instead.** On a third sample of 8 songs, the whole-lyrics aligner from 0.23.0 failed badly on a few songs - "Heart of Glass" ended up with its words a median 20 s off, and the fast rap of "Super Bass" also went wrong - while the previous Whisper-based aligner handled them. Those songs are exactly the ones where the new aligner itself reports most of its lines as low-confidence: sorted by that share, 24 test songs split cleanly, with no song between 24% and 43%. Above 35% the app now falls back to the previous aligner automatically. Words within 1 s of hand-made charts, median over 24 songs: previous aligner 0.867, new aligner always 0.919, new aligner with this fallback 0.936.
+
+- **Held notes now last as long as they are sung.** The aligner tends to end a held word early - it stops "hearing" the letters before the voice actually stops - so long notes came out short: words the hand-made charts hold for over a second ended a median 0.15 s early. A word's last note now follows the voice (the pitch track) for up to 0.4 s, and only when there is room before the next word; it never gets shorter. On 24 songs the notes cover the sung time noticeably better (sung-time overlap with hand charts 0.712 → 0.744 and 0.669 → 0.704 on a sample it was not tuned on), without extra `~` notes.
+
+- **Syllables inside a word are placed where they are actually sung.** Multi-syllable words used to be split by estimating syllable boundaries from the loudness and pitch of the voice. The aligner already knows when each letter is sung, so each syllable now starts where its first letter was aligned. Syllable starts within 50 ms of hand-made charts: 0.28 → 0.41, and 0.40 → 0.50 on a sample it was not tuned on.
+
+- **English and Swedish words are split into syllables with their own language's rules.** Every language used to be split with the Brazilian Portuguese dictionary, which splits English words too much ("lo-ve"); every extra syllable is an extra note. Measured against how the hand-made charts of a ~500-song library split each word: English words split exactly like the chart 0.78 → 0.85 (and extra syllables 13.6% → 0.5%), Swedish 0.89 → 0.91. "gonna", "wanna" and "gotta" are sung as two syllables. Other languages are unchanged.
+
+- **Fewer `~` notes.** A syllable now has to last at least 0.8 s (was 0.45 s) before it can be split into `~` continuation notes. With the new syllable timing, `~` had crept up to about 9% of all notes against 3.6% in hand-made charts; now about 4.7% (6.9% on songs it was not tuned on), with note accuracy unchanged.
+
 ## [0.23.2] — 2026-10-01 (contribution by [@osklu002](https://github.com/osklu002))
 
 ### Fixed

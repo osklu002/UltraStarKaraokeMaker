@@ -303,13 +303,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": ("[yellow]—[/yellow] {pct:.0f}% of the words in low-confidence lines - "
                "trying a rescue with the lead vocal isolated from the choir/backing vocals..."),
     },
-    "main.ctc_rescue4c_try": {
-        "pt": ("[yellow]—[/yellow] {pct:.0f}% das palavras em linhas de confiança baixa: o "
-               "alinhamento desabou. Separando o vocal de novo (a separação varia a cada "
-               "tentativa) e realinhando..."),
-        "en": ("[yellow]—[/yellow] {pct:.0f}% of the words in low-confidence lines: the "
-               "alignment collapsed. Separating the vocals again (the separation varies on "
-               "every attempt) and realigning..."),
+    "main.ctc_fallback": {
+        "pt": ("[yellow]—[/yellow] {pct:.0f}% das palavras em linhas de confiança baixa - "
+               "nesse caso o alinhamento pelo Whisper costuma ser melhor; usando ele."),
+        "en": ("[yellow]—[/yellow] {pct:.0f}% of the words in low-confidence lines - "
+               "the Whisper alignment is usually better in that case; using it."),
     },
     "main.ctc_rescue_ok": {
         "pt": ("[green]OK[/green] Resgate melhorou: {before:.0f}% -> {after:.0f}% das palavras "
