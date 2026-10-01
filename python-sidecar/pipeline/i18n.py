@@ -689,6 +689,12 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
 
     # ------------------------------------------------------------ align.py
+    "align.ctc_model_fallback": {
+        "pt": ("[AVISO] Não consegui carregar o modelo de alinhamento do "
+               "idioma ({model}): {err} - usando o modelo multilíngue."),
+        "en": ("[WARNING] Couldn't load the language's alignment model "
+               "({model}): {err} - using the multilingual model."),
+    },
     "align.ctc_lrc_blocks": {
         "pt": ("[INFO] Letra sincronizada APROVADA pelo usuário - {n} inícios de linha "
                "conferidos de ouvido limitam o alinhamento."),

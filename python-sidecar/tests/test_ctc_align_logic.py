@@ -34,6 +34,23 @@ def test_tokenize_folds_accents_and_punctuation():
     assert unmapped == 0.0
 
 
+def test_tokenize_keeps_letters_the_model_knows():
+    # vocabulário com å/ä/ö (modelo sueco): o acento não pode cair
+    d = dict(DICT, **{"å": 30, "ä": 31, "ö": 32})
+    toks, unmapped = tokenize_words(["Såg", "för", "Ärlig"], d, "sv")
+    assert toks == [[4, 30, 19], [9, 32, 13], [31, 13, 11, 10, 19]]
+    assert unmapped == 0.0
+    # sem a letra no vocabulário, cai na leitura latina de sempre
+    toks, _ = tokenize_words(["för"], DICT, "sv")
+    assert toks == [[9, 3, 13]]
+
+
+def test_tokenize_never_emits_word_separator():
+    d = dict(DICT, **{"|": 40})
+    toks, _ = tokenize_words(["a|b"], d, "en")
+    assert toks == [[1, 2]]
+
+
 def test_tokenize_never_emits_blank_or_star():
     toks, _ = tokenize_words(["rock-n-roll", "a*b"], DICT, "en")
     assert all(t not in (0, 6) for w in toks for t in w)
@@ -59,6 +76,41 @@ def test_build_targets_without_star():
     targets, ranges = build_targets([[1], [], [4]], [False, False, True], star_id=None)
     assert targets == [1, 4]
     assert ranges == [(0, 1), (1, 1), (1, 2)]
+
+
+def test_build_targets_word_separator_inside_lines_only():
+    # "|" (40) entre palavras da mesma linha; na troca de linha, só o coringa
+    targets, ranges = build_targets([[1], [2, 3], [4], [5]], [False, True, False, True],
+                                    star_id=6, sep_id=40)
+    assert targets == [6, 1, 40, 2, 3, 6, 4, 40, 5, 6]
+    assert ranges == [(1, 2), (3, 5), (6, 7), (8, 9)]
+
+
+def test_build_targets_separator_skips_empty_words():
+    targets, ranges = build_targets([[1], [], [4]], [False, False, True], star_id=None, sep_id=40)
+    assert targets == [1, 40, 4]
+    assert ranges == [(0, 1), (1, 1), (2, 3)]
+
+
+def test_swedish_gets_its_own_model_others_the_multilingual(monkeypatch):
+    import pipeline.ctc_align as C
+    loaded = []
+    monkeypatch.setattr(C, "get_ctc_model", lambda device, name=None: loaded.append(name) or name)
+    assert C.ctc_model_for("sv", "cpu") == "KBLab/wav2vec2-large-voxrex-swedish"
+    assert C.ctc_model_for("en", "cpu") is None
+    assert loaded == ["KBLab/wav2vec2-large-voxrex-swedish", None]
+
+
+def test_language_model_that_fails_to_load_falls_back_to_multilingual(monkeypatch, capsys):
+    import pipeline.ctc_align as C
+
+    def fake(device, name=None):
+        if name is not None:
+            raise OSError("offline")
+        return "mms"
+    monkeypatch.setattr(C, "get_ctc_model", fake)
+    assert C.ctc_model_for("sv", "cpu") == "mms"
+    assert "offline" in capsys.readouterr().out
 
 
 def test_spans_to_word_times_and_fill_missing():

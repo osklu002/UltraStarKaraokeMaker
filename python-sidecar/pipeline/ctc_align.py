@@ -10,7 +10,8 @@ Não existe "palavra que o Whisper não ouviu": toda palavra da letra recebe um
 lugar no áudio, e a ordem da letra é garantida pela própria busca.
 
 Modelo: MMS_FA do torchaudio (wav2vec2 multilíngue treinado para forced
-alignment em ~1100 idiomas, vocabulário latino a-z + apóstrofo). Idiomas com
+alignment em ~1100 idiomas, vocabulário latino a-z + apóstrofo). Para os
+idiomas de LANG_CTC_MODELS, um wav2vec2 próprio do idioma no lugar dele. Idiomas com
 outro alfabeto precisariam de romanização (uroman) - fora do escopo por ora:
 quando a letra não cabe no vocabulário, `align_lyrics_ctc` devolve None e o
 chamador fica com o caminho de sempre.
@@ -57,19 +58,24 @@ STAR_LOGP = 0.0
 MAX_UNMAPPED_FRAC = 0.05
 
 
-def _word_chars(word: str, language: str) -> str:
+def _fold(c: str) -> str:
+    c = _SPECIAL_FOLDS.get(c, c)
+    return "".join(x for x in unicodedata.normalize("NFKD", c) if not unicodedata.combining(x))
+
+
+def _word_chars(word: str, language: str, keep: frozenset[str] | set[str] = frozenset()) -> str:
     """Palavra -> só os caracteres que o modelo conhece (minúsculas, sem acento,
-    números por extenso). Pode devolver "" (palavra só de pontuação)."""
+    números por extenso). Pode devolver "" (palavra só de pontuação).
+    Letras em `keep` (o vocabulário do modelo) não perdem o acento: o modelo
+    sueco conhece å/ä/ö, o MMS_FA não."""
     w = word.lower().replace("’", "'").replace("`", "'")
     digits = re.sub(r"[^\w']", "", w)
     if any(c.isdigit() for c in digits):
         w = " ".join(expand_numeral(digits, language))
-    w = "".join(_SPECIAL_FOLDS.get(c, c) for c in w)
-    w = "".join(c for c in unicodedata.normalize("NFKD", w) if not unicodedata.combining(c))
-    return w
+    return "".join(c if c in keep else _fold(c) for c in w)
 
 
-_RESERVED = frozenset("-*")
+_RESERVED = frozenset("-*|")  # blank, coringa, separador de palavras
 
 
 def tokenize_words(
@@ -83,7 +89,7 @@ def tokenize_words(
     letters = unmapped = 0
     for word in words:
         ids = []
-        for c in _word_chars(word, language):
+        for c in _word_chars(word, language, dictionary.keys()):
             # "-" é o blank e "*" o coringa no vocabulário do MMS_FA: o hífen
             # de "rock-n-roll" não pode virar o token blank
             if c in dictionary and c not in _RESERVED:
@@ -101,6 +107,7 @@ def build_targets(
     word_tokens: list[list[int]],
     line_ends: list[bool],
     star_id: int | None,
+    sep_id: int | None = None,
 ) -> tuple[list[int], list[tuple[int, int]]]:
     """
     Sequência-alvo do CTC + faixa [ini, fim) de cada palavra dentro dela.
@@ -109,10 +116,16 @@ def build_targets(
     o que importa mais: sem ele, a introdução instrumental que vaza no stem
     precisa ser "explicada" por letra, e as primeiras palavras grudam no 0 s
     (medido em "Nothing Else Matters": "So close" em 0,0 s, gold 61 s).
+
+    Com `sep_id`, o separador de palavras do modelo ("|" nos wav2vec2 do
+    Hugging Face) entra entre duas palavras da mesma linha - também fora das
+    palavras. Na troca de linha quem separa é o coringa.
     """
     targets: list[int] = [star_id] if star_id is not None else []
     ranges: list[tuple[int, int]] = []
     for k, ids in enumerate(word_tokens):
+        if sep_id is not None and ids and ranges and targets and targets[-1] not in (star_id, sep_id):
+            targets.append(sep_id)
         start = len(targets)
         targets.extend(ids)
         ranges.append((start, len(targets)))
@@ -212,6 +225,91 @@ def _get_mms_model(device: str):
         model = MMS_FA.get_model(with_star=True).to(device).eval()
         _MODEL_CACHE[key] = (model, MMS_FA.get_dict(star="*"))
     return _MODEL_CACHE[key]
+
+
+# Separador de palavras no `dictionary` de um modelo do Hugging Face (o "|"
+# dos wav2vec2 CTC). O MMS_FA não tem.
+SEP_KEY = "|"
+
+
+class _HFCTCModel:
+    """
+    wav2vec2 CTC do Hugging Face com a MESMA interface do modelo MMS_FA
+    with_star do torchaudio, para o compute_emissions servir aos dois:
+    `model(x) -> (emissões [1, T, C+1], None)`, com uma última coluna do
+    coringa "*" fixa em 0 - o compute_emissions renormaliza todas menos ela.
+    """
+
+    def __init__(self, model, normalize: bool):
+        self.model = model
+        self.normalize = normalize
+
+    def __call__(self, x):
+        import torch
+        if self.normalize:  # do_normalize do feature extractor do modelo
+            x = (x - x.mean(dim=-1, keepdim=True)) / torch.sqrt(x.var(dim=-1, keepdim=True) + 1e-7)
+        logits = self.model(x).logits
+        return torch.cat([logits, torch.zeros_like(logits[..., :1])], dim=-1), None
+
+
+def _get_hf_model(name: str, device: str):
+    """
+    (modelo, dicionário) de um wav2vec2 CTC do Hugging Face, no formato do
+    _get_mms_model: letras em minúsculas, "-" = blank (o <pad>), "*" = a
+    coluna extra do coringa e SEP_KEY = o separador de palavras.
+    """
+    key = (name, device)
+    if key not in _MODEL_CACHE:
+        from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2ForCTC, Wav2Vec2CTCTokenizer
+        tok = Wav2Vec2CTCTokenizer.from_pretrained(name)
+        fe = Wav2Vec2FeatureExtractor.from_pretrained(name)
+        model = Wav2Vec2ForCTC.from_pretrained(name).to(device).eval()
+        vocab = tok.get_vocab()
+        dictionary = {k.lower(): v for k, v in vocab.items()
+                      if len(k) == 1 and k != tok.word_delimiter_token}
+        dictionary["-"] = tok.pad_token_id
+        dictionary["*"] = model.config.vocab_size
+        dictionary[SEP_KEY] = vocab[tok.word_delimiter_token]
+        _MODEL_CACHE[key] = (_HFCTCModel(model, fe.do_normalize), dictionary)
+    return _MODEL_CACHE[key]
+
+
+def get_ctc_model(device: str, model_name: str | None = None):
+    """`model_name` None = MMS_FA; senão um wav2vec2 CTC do Hugging Face."""
+    return _get_mms_model(device) if model_name is None else _get_hf_model(model_name, device)
+
+
+# Modelo acústico do idioma, no lugar do MMS_FA multilíngue. Sueco: o mesmo
+# wav2vec2 do KBLab que o WhisperX já usa no caminho do Whisper (ou seja, quem
+# gera em sueco já o baixa), e o vocabulário dele tem å/ä/ö - o MMS_FA só tem
+# a-z, e "så"/"sa", "för"/"for" viravam a mesma coisa.
+#
+# MEDIDO (01/10/2026, 7 músicas suecas com chart feito à mão, mesmos stems;
+# a 8ª da amostra tem o chart deslocado e ficou de fora): palavras a até 1 s,
+# mediana 0,981 -> 1,000 (média 0,947 -> 0,982); p90 do erro de início
+# 145 -> 123 ms; fim da palavra 95 -> 86 ms. O MMS_FA errava linhas inteiras
+# por segundos em 2 das 7 (p90 2,0 s e 1,3 s -> 0,2 s e 0,6 s); em 1 das 7 o
+# sueco foi pior (p90 160 -> 722 ms). A mediana do erro de início fica 7 ms
+# pior (44 -> 51 ms). E o score dele é mais alto: nenhuma das 8 passou de 35%
+# de palavras de confiança baixa (o MMS_FA passou numa, que ia cair pro
+# Whisper), então o LOW_LINE_SCORE e o limite do retorno valem como estão.
+LANG_CTC_MODELS = {"sv": "KBLab/wav2vec2-large-voxrex-swedish"}
+
+
+def ctc_model_for(language: str, device: str):
+    """
+    (modelo, dicionário) para o idioma. Se o modelo do idioma não carrega (sem
+    internet no primeiro uso, por exemplo), fica o MMS_FA - ainda é o CTC, e o
+    caminho do Whisper precisaria do mesmo modelo para alinhar.
+    """
+    name = LANG_CTC_MODELS.get(language)
+    if name is not None:
+        try:
+            return get_ctc_model(device, name)
+        except Exception as e:  # noqa: BLE001 - qualquer falha de download/carga
+            from .i18n import t as _t
+            print(_t("align.ctc_model_fallback", model=name, err=e))
+    return get_ctc_model(device)
 
 
 def compute_emissions(
@@ -394,12 +492,12 @@ def plan_blocks(
     return blocks
 
 
-def _align_block(emissions, frame_s, t0, t1, word_tokens, line_ends, star_id, blank):
+def _align_block(emissions, frame_s, t0, t1, word_tokens, line_ends, star_id, blank, sep_id=None):
     """
     Alinha um bloco de palavras dentro de [t0, t1). Devolve (tempos por
     palavra, tempos das letras por palavra), ou None se não cabe.
     """
-    targets, ranges = build_targets(word_tokens, line_ends, star_id)
+    targets, ranges = build_targets(word_tokens, line_ends, star_id, sep_id)
     if not ranges:
         return [], []
     f0 = max(0, int(t0 / frame_s))
@@ -419,7 +517,7 @@ def _align_block(emissions, frame_s, t0, t1, word_tokens, line_ends, star_id, bl
 def align_blocks(
     emissions, frame_s: float, blocks: list[tuple[int, int, float, float]],
     word_tokens: list[list[int]], line_ends: list[bool],
-    star_id: int | None, blank: int, return_tokens: bool = False,
+    star_id: int | None, blank: int, return_tokens: bool = False, sep_id: int | None = None,
 ):
     """
     Alinha cada bloco na sua janela. Bloco que não cabe na janela (mais
@@ -433,7 +531,7 @@ def align_blocks(
     while k < len(blocks):
         i0, i1, t0, t1 = blocks[k]
         res = _align_block(emissions, frame_s, t0, t1, word_tokens[i0:i1],
-                           line_ends[i0:i1], star_id, blank)
+                           line_ends[i0:i1], star_id, blank, sep_id)
         if res is not None:
             results.append(res)
             k += 1
@@ -466,6 +564,8 @@ def align_lyrics_ctc(
     anchors: list | None = None,
     emissions=None,
     star_logp: float = STAR_LOGP,
+    model_name: str | None = None,
+    use_sep: bool = True,
 ) -> list[tuple[float, float, float, bool]] | None:
     """
     Alinha `words` (a letra inteira, na ordem) ao áudio vocal. Devolve um
@@ -476,9 +576,10 @@ def align_lyrics_ctc(
     align.compute_anchors sobre a transcrição do Whisper): híbrido - faixas de
     âncoras exatas confiáveis viram limites duros e o CTC alinha bloco a bloco
     (ver plan_blocks). `emissions` = (tensor, frame_s) já calculado, pra
-    reusar entre variantes.
+    reusar entre variantes - do MESMO modelo que `model_name` escolhe
+    (get_ctc_model). `use_sep` só vale para modelo com separador de palavras.
     """
-    model, dictionary = _get_mms_model(device)
+    model, dictionary = get_ctc_model(device, model_name)
     word_tokens, unmapped = tokenize_words(words, dictionary, language)
     if unmapped > MAX_UNMAPPED_FRAC:
         return None
@@ -491,7 +592,9 @@ def align_lyrics_ctc(
     audio_dur = len(audio) / SAMPLE_RATE
     runs = hard_anchor_runs(anchors, words) if anchors is not None else []
     blocks = plan_blocks(len(words), runs, anchors or [], audio_dur)
-    times = align_blocks(em, frame_s, blocks, word_tokens, line_ends, star_id, dictionary["-"])
+    sep_id = dictionary.get(SEP_KEY) if use_sep else None
+    times = align_blocks(em, frame_s, blocks, word_tokens, line_ends, star_id, dictionary["-"],
+                         sep_id=sep_id)
     if all(t is None for t in times):
         return None
     return fill_missing(times)
@@ -610,7 +713,7 @@ def align_lyrics_ctc_to_audio(
     words, line_ends, singers = A._load_lyrics_words_with_line_ends(lyrics_path)
     if not words:
         return None
-    model, dictionary = _get_mms_model(device)
+    model, dictionary = ctc_model_for(language, device)
     word_tokens, unmapped = tokenize_words(words, dictionary, language)
     if unmapped > MAX_UNMAPPED_FRAC:
         return None
@@ -630,7 +733,8 @@ def align_lyrics_ctc_to_audio(
     em, frame_s = compute_emissions(model, audio, device)
     em[:, star_id] = STAR_LOGP
     times, token_times = align_blocks(em, frame_s, blocks, word_tokens, line_ends, star_id,
-                                      dictionary["-"], return_tokens=True)
+                                      dictionary["-"], return_tokens=True,
+                                      sep_id=dictionary.get(SEP_KEY))
     if all(t is None for t in times):
         return None
     timings = to_word_timings(words, line_ends, singers, fill_missing(times))
