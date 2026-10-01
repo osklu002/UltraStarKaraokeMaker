@@ -6,6 +6,11 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+## [0.23.2] - 2026-10-01 (contribuição [@osklu002](https://github.com/osklu002))
+
+### Corrigido
+- **A janela não trava mais ao buscar dados do YouTube, ler tags de áudio ou baixar complementos.** Esses passos rodavam síncronos na thread principal da interface gráfica. Agora rodam assincronamente em segundo plano (`tokio::process`), mantendo a janela responsiva o tempo todo.
+
 ## [0.23.1] - 2026-09-30
 
 ### Corrigido

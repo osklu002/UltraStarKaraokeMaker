@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.23.2] — 2026-10-01 (contribution by [@osklu002](https://github.com/osklu002))
+
+### Fixed
+- **The window no longer freezes while looking up YouTube videos, reading audio tags, or downloading package assets.** Those operations ran synchronously on the main UI thread. They now run asynchronously in the background (`tokio::process`), keeping the interface fully responsive.
+
 ## [0.23.1] — 2026-09-30
 
 ### Fixed
