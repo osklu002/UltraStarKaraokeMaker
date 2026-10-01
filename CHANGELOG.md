@@ -5,10 +5,9 @@ Todas as mudanças relevantes do USKMaker. *(English: [CHANGELOG.en.md](CHANGELO
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o projeto usa [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
-
-<<<<<<< HEAD
 ### Adicionado
 
+- **Pacotes para Linux: `.deb`, `.rpm` e AppImage.** Até agora, quem usa Linux precisava compilar o app a partir do código. O build no Linux agora gera os três, e um novo workflow de CI (`build-linux.yml`) os monta a cada push e os anexa aos releases com tag, ao lado do instalador do Windows. O `.deb` e o `.rpm` puxam o ffmpeg da distribuição (o `.rpm` pede `/usr/bin/ffmpeg`, então o `ffmpeg-free` do próprio Fedora basta). Montado no Ubuntu 22.04, o AppImage também roda em distribuições de 2022 para cá. O ambiente de IA é configurado como no Windows, pelo botão **"Configurar ambiente de IA"** (`setup-sidecar.sh`). O README ganhou os passos de instalação no Linux (fecha o #15).
 - **Opção "Cookies do YouTube", para vídeos que o YouTube só libera para quem está logado.** Alguns vídeos agora falham com "Sign in to confirm you're not a bot", faça o app o que fizer. Escolha o navegador em que você está logado no YouTube (Firefox, Chrome, Chromium, Brave ou Edge) e os downloads e a leitura dos dados do vídeo passam a usar os cookies do YouTube dele. Desligada por padrão.
 
 ### Alterado
@@ -33,6 +32,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - **No Linux, o Deno que o setup instala nunca era usado.** O yt-dlp precisa de um runtime JavaScript para o YouTube, e sem ele o YouTube recusa mais pedidos. O setup põe o Deno na pasta `bin` do app, mas essa pasta só entrava no `PATH` junto com um ffmpeg embutido, que no Linux normalmente não existe. Agora ela entra sempre que existe.
 - **"Gerar de novo" agora mostra as opções antes.** Antes começava na hora com uma cópia da geração anterior, opções incluídas, então uma opção trocada no meio (por exemplo, ligar os cookies do YouTube) era ignorada sem aviso. Agora a música volta para o formulário (link ou arquivo, letra, título, artista, idioma) e a tela sobe; confira as opções e aperte Gerar.
 - **Os botões de ler os dados do vídeo e de buscar a letra mostram um indicador enquanto trabalham.** A consulta pode levar alguns segundos (mais com os cookies do YouTube), e o botão só mudava o texto, parecendo travado.
+- **"Abrir pasta" no AppImage não entrega mais ao gerenciador de arquivos o GTK do próprio AppImage.** O lançador do AppImage exporta caminhos para as bibliotecas GTK que ele leva junto, e todo programa que o app inicia as herda - inclusive o gerenciador de arquivos que o `xdg-open` abre, que carregaria essas bibliotecas no lugar das do sistema. O app agora remove essas variáveis antes de abrir uma pasta; fora do AppImage nada muda.
 
 ## [0.23.2] - 2026-10-01 (contribuição [@osklu002](https://github.com/osklu002))
 

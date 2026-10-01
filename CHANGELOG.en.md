@@ -5,10 +5,9 @@ All notable changes to USKMaker. *(Português: [CHANGELOG.md](CHANGELOG.md))*
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
-
-<<<<<<< HEAD
 ### Added
 
+- **Linux packages: `.deb`, `.rpm` and AppImage.** Until now Linux users had to build the app from source. The Linux build now produces all three, and a new CI workflow (`build-linux.yml`) builds them on every push and attaches them to tagged releases, next to the Windows installer. The `.deb` and `.rpm` pull in the distribution's ffmpeg (the `.rpm` asks for `/usr/bin/ffmpeg`, so Fedora's own `ffmpeg-free` is enough). Built on Ubuntu 22.04, so the AppImage also runs on distributions from 2022 on. The AI environment is set up the same way as on Windows, with the **"Set up AI environment"** button (`setup-sidecar.sh`). The README now has Linux install steps (closes #15).
 - **"YouTube cookies" option, for videos YouTube only serves to signed-in users.** Some videos now fail with "Sign in to confirm you're not a bot", whatever the app does. Pick the browser you are signed in to YouTube with (Firefox, Chrome, Chromium, Brave or Edge) and the downloads and the video-info lookup use its YouTube cookies. Off by default.
 
 ### Changed
@@ -33,6 +32,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **On Linux, the Deno that the setup installs was never used.** yt-dlp needs a JavaScript runtime for YouTube, and without one YouTube refuses more requests. The setup puts Deno in the app's `bin` folder, but that folder only reached the `PATH` together with a bundled ffmpeg, which Linux normally doesn't have. It is now always added when it exists.
 - **"Generate again" now shows the options first.** It used to start right away with a copy of the previous run, options included, so an option changed in between (for example turning on YouTube cookies) was silently ignored. It now puts the song back into the form (link or file, lyrics, title, artist, language) and scrolls up; check the options and press Generate.
 - **The "fetch video info" and lyrics search buttons show a spinner while they work.** A lookup can take several seconds (longer with YouTube cookies), and the button only changed its text, so it looked frozen.
+=======
+### Added
+
+- **Linux packages: `.deb`, `.rpm` and AppImage.** Until now Linux users had to build the app from source. The Linux build now produces all three, and a new CI workflow (`build-linux.yml`) builds them on every push and attaches them to tagged releases, next to the Windows installer. The `.deb` and `.rpm` pull in the distribution's ffmpeg (the `.rpm` asks for `/usr/bin/ffmpeg`, so Fedora's own `ffmpeg-free` is enough). Built on Ubuntu 22.04, so the AppImage also runs on distributions from 2022 on. The AI environment is set up the same way as on Windows, with the **"Set up AI environment"** button (`setup-sidecar.sh`). The README now has Linux install steps (closes #15).
+
+### Fixed
+
+- **"Open folder" from the AppImage no longer hands the file manager the AppImage's own GTK.** The AppImage launcher exports paths to the GTK libraries it carries, and every program the app starts inherits them - including the file manager that `xdg-open` launches, which would then load those libraries instead of the system's. The app now removes those variables before opening a folder; nothing changes outside the AppImage.
+>>>>>>> osklu002/feat/linux-packaging
 
 ## [0.23.2] — 2026-10-01 (contribution by [@osklu002](https://github.com/osklu002))
 
