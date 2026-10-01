@@ -9,6 +9,10 @@ re-separated; songs without a cached stem are skipped.
   python eval/ab_align.py --lib ~/Documents/songs --n 8 --seed 0 --variant ctc
 
 Per-variant alignments are cached as cache/<slug>/align_<variant>.json.
+
+A "kb-" prefix runs a CTC variant on KBLab's Swedish wav2vec2 instead of
+MMS_FA (it knows å/ä/ö), e.g. --lang sv --variant kb-ctc; "-nosep" leaves out
+its word separator.
 """
 from __future__ import annotations
 
@@ -28,15 +32,21 @@ import library_replay as lr  # noqa: E402
 import usdx_parse  # noqa: E402
 
 
-def _emissions(cache: Path, audio, device: str, stem_tag: str = ""):
-    """MMS_FA emissions over the whole stem, cached (deterministic per stem)."""
+from pipeline.ctc_align import LANG_CTC_MODELS  # noqa: E402
+
+KB_SV_MODEL = LANG_CTC_MODELS["sv"]
+
+
+def _emissions(cache: Path, audio, device: str, stem_tag: str = "", model_name: str | None = None):
+    """CTC emissions over the whole stem, cached (deterministic per stem)."""
     import torch
-    from pipeline.ctc_align import _get_mms_model, compute_emissions
-    p = cache / f"emissions_mms{stem_tag}.pt"
+    from pipeline.ctc_align import compute_emissions, get_ctc_model
+    tag = "kbsv" if model_name == KB_SV_MODEL else "mms"
+    p = cache / f"emissions_{tag}{stem_tag}.pt"
     if p.exists():
         d = torch.load(p)
         return d["em"], d["frame_s"]
-    model, _ = _get_mms_model(device)
+    model, _ = get_ctc_model(device, model_name)
     em, frame_s = compute_emissions(model, audio, device)
     torch.save({"em": em, "frame_s": frame_s}, p)
     return em, frame_s
@@ -96,6 +106,14 @@ def _run_variant(variant: str, cache: Path, lyrics: Path, language: str, device:
     if variant.endswith("~dedup"):
         variant = variant.removesuffix("~dedup")
         lyrics = _dedup_lyrics(cache, lyrics)
+    # "kb-..." = modelo sueco do KBLab no lugar do MMS_FA
+    model_name = None
+    if variant.startswith("kb-"):
+        variant = variant.removeprefix("kb-")
+        model_name = KB_SV_MODEL
+    # "...-nosep" = sem o separador de palavras "|" (só modelo do Hugging Face)
+    use_sep = not variant.endswith("-nosep")
+    variant = variant.removesuffix("-nosep")
     stem = cache / "vocals.wav"
     if lead:
         stem = cache / "lead_vocals.wav"
@@ -110,7 +128,7 @@ def _run_variant(variant: str, cache: Path, lyrics: Path, language: str, device:
         for wt, le in zip(timings, line_ends):
             wt.is_line_end = le
         return timings
-    em = _emissions(cache, audio, device, "_lead" if lead else "")
+    em = _emissions(cache, audio, device, "_lead" if lead else "", model_name)
     anchors = None
     if variant.startswith("hybrid"):
         anchors = compute_anchors(_whisper_words(cache, audio, language, device), words)
@@ -119,7 +137,8 @@ def _run_variant(variant: str, cache: Path, lyrics: Path, language: str, device:
     star_logp = -float(m.group(1)) if m else 0.0
     res = align_lyrics_ctc(audio, words, line_ends, language, device,
                            use_star=not variant.endswith("nostar"),
-                           anchors=anchors, emissions=em, star_logp=star_logp)
+                           anchors=anchors, emissions=em, star_logp=star_logp,
+                           model_name=model_name, use_sep=use_sep)
     if res is None:
         return None
     if snap:
@@ -164,7 +183,7 @@ def main() -> int:
     runs_root = str(_HERE.parents[0] / "eval_runs")
     manifest = lr.build_manifest(os.path.expanduser(args.lib), runs_root)
     if args.lang:
-        manifest = [s for s in manifest if s["lang_group"] == args.lang]
+        manifest = [s for s in manifest if lr.in_lang(s, args.lang)]
     sample, _ = lr.stratified_sample(manifest, args.n, args.seed)
     suffix = f"-{args.lang}" if args.lang else ""
     run_dir = Path(runs_root) / f"replay-n{args.n}-seed{args.seed}{suffix}"
