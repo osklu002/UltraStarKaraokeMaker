@@ -101,6 +101,13 @@ def test_swedish_gets_its_own_model_others_the_multilingual(monkeypatch):
     assert loaded == ["KBLab/wav2vec2-large-voxrex-swedish", None]
 
 
+def test_every_language_model_has_a_pinned_revision():
+    import pipeline.ctc_align as C
+    for name in C.LANG_CTC_MODELS.values():
+        rev = C.HF_MODEL_REVISIONS[name]
+        assert len(rev) == 40 and all(c in "0123456789abcdef" for c in rev)
+
+
 def test_language_model_that_fails_to_load_falls_back_to_multilingual(monkeypatch, capsys):
     import pipeline.ctc_align as C
 

@@ -252,18 +252,28 @@ class _HFCTCModel:
         return torch.cat([logits, torch.zeros_like(logits[..., :1])], dim=-1), None
 
 
+# Commit fixo de cada modelo do Hugging Face: sem ele o from_pretrained baixa
+# o que estiver no `main` do repositório no dia - um modelo diferente do que
+# foi medido, sem aviso. É o commit com que LANG_CTC_MODELS foi medido.
+HF_MODEL_REVISIONS = {
+    "KBLab/wav2vec2-large-voxrex-swedish": "ca70e31c06a2617bf7fe3b4fb5d387d2b19b2983",
+}
+
+
 def _get_hf_model(name: str, device: str):
     """
     (modelo, dicionário) de um wav2vec2 CTC do Hugging Face, no formato do
     _get_mms_model: letras em minúsculas, "-" = blank (o <pad>), "*" = a
-    coluna extra do coringa e SEP_KEY = o separador de palavras.
+    coluna extra do coringa e SEP_KEY = o separador de palavras. Só modelo
+    com commit em HF_MODEL_REVISIONS (KeyError se não tiver).
     """
     key = (name, device)
     if key not in _MODEL_CACHE:
         from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2ForCTC, Wav2Vec2CTCTokenizer
-        tok = Wav2Vec2CTCTokenizer.from_pretrained(name)
-        fe = Wav2Vec2FeatureExtractor.from_pretrained(name)
-        model = Wav2Vec2ForCTC.from_pretrained(name).to(device).eval()
+        rev = HF_MODEL_REVISIONS[name]
+        tok = Wav2Vec2CTCTokenizer.from_pretrained(name, revision=rev)
+        fe = Wav2Vec2FeatureExtractor.from_pretrained(name, revision=rev)
+        model = Wav2Vec2ForCTC.from_pretrained(name, revision=rev).to(device).eval()
         vocab = tok.get_vocab()
         dictionary = {k.lower(): v for k, v in vocab.items()
                       if len(k) == 1 and k != tok.word_delimiter_token}
