@@ -10,6 +10,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import ReviewScreen from "./review/ReviewScreen";
 import { useI18n, StrKey } from "./i18n";
 import { isApprovedLrc } from "./review/lrcTiming";
+import { suggestLanguage } from "./langDetect";
 const appWindow = getCurrentWindow();
 
 // GET JSON no LRCLIB pelo plugin http do Tauri (sem CORS). O plugin da v2 segue
@@ -284,6 +285,10 @@ const LANGUAGES: { code: string; name: string }[] = [
   { code: "zh", name: "中文" },
 ];
 
+function languageName(code: string): string {
+  return LANGUAGES.find((l) => l.code === code)?.name ?? code;
+}
+
 // Idiomas de escrita NÃO-latina: aqui a letra precisa ser digitada no script
 // nativo (한국어, 日本語, кириллица...), não romanizada - o Whisper transcreve no
 // script nativo e o casamento com a letra falha se ela vier romanizada.
@@ -320,6 +325,8 @@ function App() {
   // aviso transitório "preenchemos X a partir do arquivo" (auto-fill de tags)
   const [tagsMsg, setTagsMsg] = useState<string | null>(null);
   const [language, setLanguage] = useState(saved.language ?? "pt");
+  // Idioma que a letra parece ter, quando é outro que o escolhido (null = sem aviso).
+  const suggestedLanguage = useMemo(() => suggestLanguage(language, lyricsText), [language, lyricsText]);
   const [bpm, setBpm] = useState("");
   // Tom fixo: transpõe o pacote N semitons. Por-música (não persiste): cada
   // faixa tem seu tom, guardar entre gerações transporia a próxima sem querer.
@@ -935,7 +942,7 @@ function App() {
   }
 
   // Snapshot dos campos do formulário no objeto que run_pipeline espera.
-  function buildInput(): Record<string, unknown> {
+  function buildInput(languageOverride?: string): Record<string, unknown> {
     return {
       youtubeUrl: sourceMode === "youtube" ? youtubeUrl.trim() : null,
       filePath: sourceMode === "file" ? filePath.trim() : null,
@@ -943,7 +950,7 @@ function App() {
       syncedLyrics,
       title: title.trim(),
       artist: artist.trim(),
-      language,
+      language: languageOverride ?? language,
       bpm: bpm.trim() ? parseFloat(bpm) : null,
       outDir: outDir.trim(),
       withVideo: sourceMode === "youtube" ? withVideo : false,
@@ -980,24 +987,44 @@ function App() {
     setBgVideoUrl("");
   }
 
-  function makeQueueItem(): QueueItem {
+  function makeQueueItem(languageOverride?: string): QueueItem {
     return {
       id: nextIdRef.current++,
       artist: artist.trim(),
       title: title.trim(),
-      input: buildInput(),
+      input: buildInput(languageOverride),
       status: "pending",
     };
   }
 
-  function addToQueue() {
+  // A letra parece de outro idioma que o escolhido? Pergunta uma vez antes de
+  // a música entrar na fila/geração: o idioma decide o modelo de alinhamento
+  // (sueco tem modelo próprio), a divisão silábica e o Whisper. Devolve o
+  // idioma a usar - o setLanguage só vale no próximo render, por isso o valor
+  // vai direto para o job.
+  async function resolveLanguage(): Promise<string> {
+    if (!suggestedLanguage) return language;
+    const detected = languageName(suggestedLanguage);
+    const selected = languageName(language);
+    const switchIt = await ask(t("langMismatchConfirm", { detected, selected }), {
+      title: "USKMaker",
+      okLabel: t("langSwitchTo", { lang: detected }),
+      cancelLabel: t("langKeep", { lang: selected }),
+    });
+    if (!switchIt) return language;
+    setLanguage(suggestedLanguage);
+    return suggestedLanguage;
+  }
+
+  async function addToQueue() {
     const validationError = validate();
     if (validationError) {
       setError(validationError);
       return;
     }
     setError(null);
-    setQueue((q) => [...q, makeQueueItem()]);
+    const lang = await resolveLanguage();
+    setQueue((q) => [...q, makeQueueItem(lang)]);
     clearSongFields();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -1166,7 +1193,7 @@ function App() {
     // Se o formulário está preenchido, a música atual entra como último item.
     let current: QueueItem | null = null;
     if (!formErr) {
-      current = makeQueueItem();
+      current = makeQueueItem(await resolveLanguage());
     } else if (pending.length === 0) {
       setError(formErr);
       return;
@@ -1744,6 +1771,14 @@ function App() {
           </select>
           {NON_LATIN_LANGS.has(language) && (
             <p className="field-hint">{t("langNonLatinHint")}</p>
+          )}
+          {suggestedLanguage && (
+            <p className="field-hint warn">
+              {t("langLooksLike", { lang: languageName(suggestedLanguage) })}{" "}
+              <button type="button" className="mini-button" onClick={() => setLanguage(suggestedLanguage)}>
+                {t("langSwitchTo", { lang: languageName(suggestedLanguage) })}
+              </button>
+            </p>
           )}
         </div>
         <div className="field-group">
