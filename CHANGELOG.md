@@ -4,7 +4,7 @@ Todas as mudanças relevantes do USKMaker. *(English: [CHANGELOG.en.md](CHANGELO
 
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o projeto usa [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
-## [Não lançado]
+## [0.24.1] - 2026-10-01 (contribuição [@osklu002](https://github.com/osklu002))
 
 ### Adicionado
 
