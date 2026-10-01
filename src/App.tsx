@@ -629,6 +629,7 @@ function App() {
       filters: [{ name: t("fileFilterName"), extensions: ["mp3", "wav", "mp4", "m4a", "flac"] }],
     });
     if (typeof selected === "string") {
+      leaveLastRun();
       setFilePath(selected);
       autofillFromTags(selected);
     }
@@ -671,6 +672,7 @@ function App() {
   async function fetchVideoInfo() {
     const url = youtubeUrl.trim();
     if (!url) return;
+    leaveLastRun();
     setFetchingInfo(true);
     setLyricsSearchMsg(null);
     try {
@@ -1210,7 +1212,7 @@ function App() {
     setBpm(i.bpm != null ? String(i.bpm) : "");
     setTranspose(String(i.transpose ?? 0));
     setBgVideoUrl(i.bgVideoUrl ?? "");
-    setResult(null);
+    clearLastRun();
     setLyricsSearchMsg({ kind: "ok", text: t("regenFormReady") });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -1221,6 +1223,26 @@ function App() {
       await invoke("cancel_pipeline", { lang });
     } catch {
       setCancelling(false);
+    }
+  }
+
+  // Tira da tela o que sobrou da última geração: resultado, passos, log, erro.
+  function clearLastRun() {
+    setResult(null);
+    setError(null);
+    setLogs([]);
+    setCurrentStep(0);
+    setElapsed(0);
+    setCancelled(false);
+  }
+
+  // O usuário começou OUTRA música mexendo na fonte (link, arquivo, aba) com a
+  // geração anterior ainda na tela. Sem isto o cartão de opções - que só
+  // aparece sem resultado - continuava escondido, e o Gerar usava opções que
+  // não se viam; só "Nova música" o trazia de volta.
+  function leaveLastRun() {
+    if (!isRunning && (result || error || cancelled || currentStep > 0 || logs.length > 0)) {
+      clearLastRun();
     }
   }
 
@@ -1237,12 +1259,7 @@ function App() {
     setBpm("");
     setTranspose("0");
     setBgVideoUrl("");
-    setResult(null);
-    setError(null);
-    setLogs([]);
-    setCurrentStep(0);
-    setElapsed(0);
-    setCancelled(false);
+    clearLastRun();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -1314,6 +1331,7 @@ function App() {
           // Volta ao formulário já preenchido: nome, e o link quando ele pôde
           // ser recuperado do log. A letra é LIMPA de propósito - o passo
           // seguinte é "Buscar letra", que traz a versão APROVADA se existir.
+          leaveLastRun();
           setArtist(d.artist);
           setTitle(d.title);
           if (d.sourceUrl) {
@@ -1542,14 +1560,14 @@ function App() {
       <div className="source-toggle">
         <button
           className={sourceMode === "youtube" ? "active" : ""}
-          onClick={() => setSourceMode("youtube")}
+          onClick={() => { leaveLastRun(); setSourceMode("youtube"); }}
           disabled={isRunning}
         >
           {t("tabYoutube")}
         </button>
         <button
           className={sourceMode === "file" ? "active" : ""}
-          onClick={() => setSourceMode("file")}
+          onClick={() => { leaveLastRun(); setSourceMode("file"); }}
           disabled={isRunning}
         >
           {t("tabFile")}
@@ -1562,7 +1580,7 @@ function App() {
           <input
             type="text"
             value={youtubeUrl}
-            onChange={(e) => setYoutubeUrl(e.target.value)}
+            onChange={(e) => { leaveLastRun(); setYoutubeUrl(e.target.value); }}
             placeholder="https://www.youtube.com/watch?v=..."
             disabled={isRunning}
           />

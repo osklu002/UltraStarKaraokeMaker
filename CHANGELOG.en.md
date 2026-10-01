@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Entering the next song after a generation now brings the options back.** After a song finished, the right-hand side kept showing its result, and the options (language, video, audio format...) only came back with **New song**: pasting or fetching another YouTube link, picking another file or switching between YouTube and file filled in the form, but Generate then used options that were not on screen. Starting a new song from the source now clears the finished one, like **New song** does but keeping what you typed. **Generate again** also no longer leaves the previous run's step list on screen.
+
 ## [0.24.0] — 2026-10-01 (contribution by [@osklu002](https://github.com/osklu002))
 
 ### Added

@@ -6,6 +6,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+### Corrigido
+
+- **Começar a próxima música depois de uma geração agora traz as opções de volta.** Quando uma música terminava, o lado direito continuava mostrando o resultado dela, e as opções (idioma, vídeo, formato de áudio...) só voltavam com **Nova música**: colar ou buscar outro link do YouTube, escolher outro arquivo ou trocar entre YouTube e arquivo preenchia o formulário, mas o Gerar usava opções que não estavam na tela. Começar uma música nova pela fonte agora tira a anterior da tela, como o **Nova música**, mas mantendo o que foi digitado. O **Gerar de novo** também não deixa mais a lista de passos da geração anterior na tela.
+
 ## [0.24.0] - 2026-10-01 (contribuição [@osklu002](https://github.com/osklu002))
 
 ### Adicionado
