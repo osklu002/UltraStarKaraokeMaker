@@ -6,6 +6,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Um aviso quando a letra parece de outro idioma que o escolhido.** O idioma é uma preferência salva (português por padrão), então era fácil gerar uma música sueca com o idioma em "English" sem perceber - e o idioma decide o modelo de alinhamento (o sueco tem modelo próprio), a divisão em sílabas e o reconhecimento de voz. O app agora lê a letra e, quando ela parece claramente de outro idioma, avisa embaixo do campo de idioma, com um botão **Trocar para Svenska**; o Gerar e o **Adicionar à fila** perguntam mais uma vez. Funciona sem internet e na hora: escritas não latinas são reconhecidas pelas letras, idiomas de alfabeto latino pelas palavras mais frequentes. Na dúvida não diz nada, e idiomas próximos (dinamarquês/norueguês, tcheco/eslovaco...) nunca avisam um sobre o outro. Conferido em 529 charts feitos à mão (inglês e sueco, mais alguns outros): nenhum aviso falso com o idioma certo selecionado; com o errado (inglês ↔ sueco), sugere o idioma certo para 33 de 35 músicas suecas e 486 de 489 inglesas. `npm test` roda os testes dele (Node 22+).
+
 ## [0.24.0] - 2026-10-01 (contribuição [@osklu002](https://github.com/osklu002))
 
 ### Adicionado

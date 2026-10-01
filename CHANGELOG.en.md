@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **A warning when the lyrics look like another language than the one selected.** The language is a saved setting (Portuguese by default), so it was easy to generate a Swedish song with the language on "English" without noticing - and the language decides the alignment model (Swedish has its own), the syllable split and the speech recognition. The app now reads the lyrics and, when they clearly look like another language, says so under the language field with a **Switch to Svenska** button; Generate and **Add to queue** ask once more. It works offline and instantly: non-Latin scripts are recognized by their letters, Latin-script languages by their most frequent words. When unsure it says nothing, and close languages (Danish/Norwegian, Czech/Slovak...) never warn about each other. Checked on 529 hand-made charts (English and Swedish, plus a few others): no false warning with the right language selected; with the wrong one (English ↔ Swedish) it suggests the right language for 33 of 35 Swedish songs and 486 of 489 English ones. `npm test` runs its tests (Node 22+).
+
 ## [0.24.0] — 2026-10-01 (contribution by [@osklu002](https://github.com/osklu002))
 
 ### Added
