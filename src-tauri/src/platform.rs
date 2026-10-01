@@ -12,6 +12,8 @@
 //   matar a árvore    taskkill /PID <pid> /T /F      kill -KILL -- -<pgid> (grupo próprio, ver abaixo)
 //   abrir a pasta     explorer                       xdg-open (Linux) / open (macOS)
 //   setup            setup-sidecar.ps1 (PowerShell)  setup-sidecar.sh (bash)
+//
+// No AppImage há um detalhe a mais: ver `appimage_env_fixes`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -104,7 +106,54 @@ fn kill_tree_args(pid: u32) -> (&'static str, Vec<String>) {
 pub fn open_folder_command(path: &str) -> Command {
     let mut cmd = Command::new(open_folder_program());
     cmd.arg(path);
+    for (k, v) in appimage_env_fixes(|k| std::env::var(k).ok()) {
+        match v {
+            Some(v) => cmd.env(k, v),
+            None => cmd.env_remove(k),
+        };
+    }
     cmd
+}
+
+/// Variáveis que o AppRun do AppImage (hook do linuxdeploy-plugin-gtk)
+/// exporta para o GTK EMBUTIDO no AppImage achar temas, módulos e schemas.
+const APPIMAGE_GTK_VARS: &[&str] = &[
+    "GTK_DATA_PREFIX",
+    "GTK_THEME",
+    "GSETTINGS_SCHEMA_DIR",
+    "GI_TYPELIB_PATH",
+    "GIO_MODULE_DIR",
+    "GTK_EXE_PREFIX",
+    "GTK_PATH",
+    "GTK_IM_MODULE_FILE",
+    "GDK_PIXBUF_MODULE_FILE",
+];
+
+/// Ajustes de ambiente para um programa DO SISTEMA iniciado de dentro do
+/// AppImage: `None` = remover a variável, `Some` = novo valor. Fora do
+/// AppImage (sem `APPIMAGE`/`APPDIR`), nada muda.
+///
+/// Por que: o AppRun exporta as variáveis acima apontando para o GTK que o
+/// AppImage leva junto, e todo processo filho as herda. O `xdg-open` abre o
+/// gerenciador de arquivos do usuário - um programa GTK da DISTRO, que
+/// carregaria os módulos GIO/GTK do AppImage (compilados contra a glib do
+/// Ubuntu 22.04 do CI) em vez dos dele. Do `XDG_DATA_DIRS` só saem as
+/// entradas dentro do AppImage; o resto é do usuário.
+fn appimage_env_fixes(get: impl Fn(&str) -> Option<String>) -> Vec<(&'static str, Option<String>)> {
+    let non_empty = |k: &str| get(k).filter(|v| !v.is_empty());
+    let (Some(_), Some(appdir)) = (non_empty("APPIMAGE"), non_empty("APPDIR")) else {
+        return Vec::new();
+    };
+    let mut fixes: Vec<(&'static str, Option<String>)> =
+        APPIMAGE_GTK_VARS.iter().map(|k| (*k, None)).collect();
+    if let Some(dirs) = non_empty("XDG_DATA_DIRS") {
+        let kept: Vec<&str> = dirs
+            .split(':')
+            .filter(|d| !d.is_empty() && !d.starts_with(appdir.as_str()))
+            .collect();
+        fixes.push(("XDG_DATA_DIRS", (!kept.is_empty()).then(|| kept.join(":"))));
+    }
+    fixes
 }
 
 fn open_folder_program() -> &'static str {
@@ -212,6 +261,43 @@ mod tests {
             assert_eq!(prog, "kill");
             assert_eq!(args, ["-KILL", "--", "-1234"]);
         }
+    }
+
+    #[test]
+    fn appimage_env_fixes_fora_do_appimage_nao_mexe_em_nada() {
+        let fixes = appimage_env_fixes(env(&[
+            ("GTK_THEME", "Adwaita:dark"),
+            ("XDG_DATA_DIRS", "/usr/share"),
+        ]));
+        assert!(fixes.is_empty());
+    }
+
+    #[test]
+    fn appimage_env_fixes_limpa_o_gtk_do_appimage() {
+        let fixes = appimage_env_fixes(env(&[
+            ("APPIMAGE", "/home/x/USKMaker.AppImage"),
+            ("APPDIR", "/tmp/.mount_USKabc"),
+            ("XDG_DATA_DIRS", "/tmp/.mount_USKabc/usr/share:/usr/share:/home/x/.local/share/flatpak/exports/share"),
+        ]));
+        let get = |k: &str| fixes.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone());
+        for k in APPIMAGE_GTK_VARS {
+            assert_eq!(get(k), Some(None), "{k} deveria ser removida");
+        }
+        // só a entrada do AppImage sai; a ordem do resto se mantém
+        assert_eq!(
+            get("XDG_DATA_DIRS"),
+            Some(Some("/usr/share:/home/x/.local/share/flatpak/exports/share".to_string()))
+        );
+    }
+
+    #[test]
+    fn appimage_env_fixes_remove_xdg_data_dirs_que_so_tinha_o_appimage() {
+        let fixes = appimage_env_fixes(env(&[
+            ("APPIMAGE", "/a.AppImage"),
+            ("APPDIR", "/tmp/.mount_x"),
+            ("XDG_DATA_DIRS", "/tmp/.mount_x/usr/share:"),
+        ]));
+        assert!(fixes.contains(&("XDG_DATA_DIRS", None)));
     }
 
     #[cfg(unix)]
