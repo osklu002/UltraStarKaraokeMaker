@@ -552,8 +552,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "download.what_video": {"pt": "o vídeo", "en": "the video"},
     "download.what_bgvideo": {"pt": "o videoclipe de fundo", "en": "the background music video"},
     "download.cause_age": {
-        "pt": "O vídeo tem restrição de idade e exige login no YouTube.",
-        "en": "The video is age-restricted and requires a YouTube login.",
+        "pt": ("O vídeo tem restrição de idade e exige login no YouTube. Escolha o seu "
+               "navegador em \"Cookies do YouTube\" (nas opções) e gere de novo."),
+        "en": ("The video is age-restricted and requires a YouTube login. Pick your browser "
+               "under \"YouTube cookies\" (in the options) and generate again."),
     },
     "download.cause_private": {
         "pt": "O vídeo é privado.",
@@ -564,8 +566,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The video is not available (removed or blocked in your region).",
     },
     "download.cause_bot": {
-        "pt": "O YouTube pediu verificação de robô para este download.",
-        "en": "YouTube asked for a bot check for this download.",
+        "pt": ("O YouTube pediu verificação de robô para este vídeo. Escolha o navegador em "
+               "que você está logado no YouTube em \"Cookies do YouTube\" (nas opções) e gere de novo."),
+        "en": ("YouTube asked for a bot check for this video. Pick the browser you are signed "
+               "in to YouTube with under \"YouTube cookies\" (in the options) and generate again."),
     },
     "download.cause_format": {
         "pt": "O YouTube não ofereceu nenhum formato compatível para este vídeo.",

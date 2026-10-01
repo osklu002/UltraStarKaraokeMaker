@@ -203,6 +203,8 @@ interface PersistedSettings {
   yargExport: boolean;
   mp4Export: boolean;
   whisperModel: string;
+  // Navegador de onde o yt-dlp lê os cookies do YouTube ("" = desligado).
+  ytCookiesBrowser: string;
   romanize: boolean;
   audioFormat: "ogg" | "mp3";
   maxVideoResolution: number;
@@ -339,6 +341,7 @@ function App() {
   const [yargExport, setYargExport] = useState(saved.yargExport ?? false);
   const [mp4Export, setMp4Export] = useState(saved.mp4Export ?? false);
   const [whisperModel, setWhisperModel] = useState<string>(saved.whisperModel ?? "auto");
+  const [ytCookiesBrowser, setYtCookiesBrowser] = useState<string>(saved.ytCookiesBrowser ?? "");
   // Duração da faixa em segundos, quando conhecida (Buscar dados do vídeo, ou
   // as tags de um arquivo local). É o que desempata a escolha de letra no
   // LRCLIB - ver a nota longa em searchLyrics().
@@ -445,9 +448,9 @@ function App() {
 
   // ------------------------------------------------ persistência leve
   useEffect(() => {
-    const settings: PersistedSettings = { sourceMode, language, outDir, withVideo, bgVideo, cleanWork, cleanExtras, withStems, duet, backtrack, keepHarmonies, yargExport, mp4Export, whisperModel, romanize, audioFormat, maxVideoResolution };
+    const settings: PersistedSettings = { sourceMode, language, outDir, withVideo, bgVideo, cleanWork, cleanExtras, withStems, duet, backtrack, keepHarmonies, yargExport, mp4Export, whisperModel, ytCookiesBrowser, romanize, audioFormat, maxVideoResolution };
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  }, [sourceMode, language, outDir, withVideo, bgVideo, cleanWork, cleanExtras, withStems, duet, backtrack, keepHarmonies, yargExport, mp4Export, whisperModel, romanize, audioFormat, maxVideoResolution]);
+  }, [sourceMode, language, outDir, withVideo, bgVideo, cleanWork, cleanExtras, withStems, duet, backtrack, keepHarmonies, yargExport, mp4Export, whisperModel, ytCookiesBrowser, romanize, audioFormat, maxVideoResolution]);
 
   // ------------------------------------------------ SÓ EM DEV: preview de estado
   // Abre a UI num estado simulado sem precisar do backend Tauri, para inspecionar
@@ -673,7 +676,8 @@ function App() {
     try {
       const info = await invoke<{
         title?: string | null; artist?: string | null; duration?: number | null;
-      }>("fetch_video_info", { url, lang });
+        error?: string; detail?: string;
+      }>("fetch_video_info", { url, lang, ytCookiesBrowser: ytCookiesBrowser || null });
       // Preenche, mas NÃO é a palavra final: o usuário confere e corrige antes
       // de buscar a letra. Título de vídeo é território de "Official Video
       // [HD Remaster]", e um artista errado envenena a consulta ao LRCLIB
@@ -688,6 +692,14 @@ function App() {
           kind: "ok",
           text: t("fetchInfoDone", { dur: `${mins}:${String(secs).padStart(2, "0")}` }),
         });
+      } else if (info?.error) {
+        // O motivo real (antes engolido): o bloqueio "confirm you're not a
+        // bot" do YouTube se resolve ligando os cookies do navegador.
+        const key =
+          info.error === "bot" || info.error === "age"
+            ? (ytCookiesBrowser ? "fetchInfoBlockedWithCookies" : "fetchInfoBlocked")
+            : info.error === "cookies" ? "fetchInfoCookies" : "fetchInfoFailed";
+        setLyricsSearchMsg({ kind: "warn", text: t(key, { browser: ytCookiesBrowser }) });
       } else {
         setLyricsSearchMsg({ kind: "warn", text: t("fetchInfoFailed") });
       }
@@ -944,6 +956,7 @@ function App() {
       yargExport,
       mp4Export,
       whisperModel,
+      ytCookiesBrowser,
       romanize,
       audioFormat,
       maxVideoResolution: sourceMode === "youtube" && withVideo ? maxVideoResolution : 0,
@@ -1169,22 +1182,37 @@ function App() {
     await processQueue(full);
   }
 
-  // Gera de novo a última música, reusando o mesmo input (sem redigitar).
+  // "Gerar de novo": devolve a última música ao FORMULÁRIO (link/arquivo,
+  // letra, título, artista, idioma...) e sobe a tela, em vez de reenfileirar
+  // na hora. Antes reusava o input inteiro da geração anterior, OPÇÕES
+  // incluídas, sem mostrar o formulário - quem queria trocar uma opção (ex.:
+  // ligar os cookies do YouTube) mudava a caixa e o regerar a ignorava. As
+  // opções são as que estão na tela agora; o usuário confere e aperta Gerar
+  // (que também faz a confirmação de sobrescrever o pacote).
   // Útil quando a separação do vocal saiu ruim: cada tentativa varia, e a
   // próxima costuma sair melhor. (Para acertar TRECHOS, a Revisão é melhor -
   // ela não re-separa; ver o texto do botão de revisão.)
-  async function regenerate() {
+  function regenerate() {
     if (isRunning || !lastGen) return;
-    const item: QueueItem = {
-      id: nextIdRef.current++,
-      artist: lastGen.artist,
-      title: lastGen.title,
-      input: lastGen.input,
-      status: "pending",
+    const i = lastGen.input as {
+      youtubeUrl?: string | null; filePath?: string | null; lyricsText?: string;
+      syncedLyrics?: string | null; language?: string; bpm?: number | null;
+      transpose?: number; bgVideoUrl?: string | null;
     };
-    if (!(await confirmOverwrite([item]))) return;
-    setQueue((q) => [...q, item]);
-    await processQueue([item]);
+    setSourceMode(i.youtubeUrl ? "youtube" : "file");
+    setYoutubeUrl(i.youtubeUrl ?? "");
+    setFilePath(i.filePath ?? "");
+    setLyricsText(i.lyricsText ?? "");
+    setSyncedLyrics(i.syncedLyrics ?? null);
+    setTitle(lastGen.title);
+    setArtist(lastGen.artist);
+    if (i.language) setLanguage(i.language);
+    setBpm(i.bpm != null ? String(i.bpm) : "");
+    setTranspose(String(i.transpose ?? 0));
+    setBgVideoUrl(i.bgVideoUrl ?? "");
+    setResult(null);
+    setLyricsSearchMsg({ kind: "ok", text: t("regenFormReady") });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function handleCancel() {
@@ -1259,7 +1287,8 @@ function App() {
     try {
       const r = await invoke<{ cover: string | null; bg: string | null; video: string | null; errors: string[] }>(
         "fetch_package_assets",
-        { dir: analysis.dir, title: analysis.title, artist: analysis.artist, want, lang },
+        { dir: analysis.dir, title: analysis.title, artist: analysis.artist, want, lang,
+          ytCookiesBrowser: ytCookiesBrowser || null },
       );
       const got = [r.cover && "capa", r.bg && "fundo", r.video && "vídeo"].filter(Boolean);
       const a = await invoke<PackageAnalysis>("analyze_package", { dir: analysis.dir });
@@ -1543,7 +1572,7 @@ function App() {
             onClick={fetchVideoInfo}
             disabled={isRunning || fetchingInfo || !youtubeUrl.trim()}
           >
-            {fetchingInfo ? t("fetchInfoRunning") : t("fetchInfoButton")}
+            {fetchingInfo ? <><span className="spinner" /> {t("fetchInfoRunning")}</> : t("fetchInfoButton")}
           </button>
           <label className="checkbox-line" title={t("withVideoTip")}>
             <input
@@ -1636,7 +1665,7 @@ function App() {
             <span className={`lyrics-status ${lyricsSearchMsg.kind}`}>{lyricsSearchMsg.text}</span>
           )}
           <button className="mini-button" onClick={searchLyrics} disabled={isRunning || lyricsSearching}>
-            {lyricsSearching ? t("searchingLyrics") : t("searchLyrics")}
+            {lyricsSearching ? <><span className="spinner" /> {t("searchingLyrics")}</> : t("searchLyrics")}
           </button>
         </div>
         <textarea
@@ -1736,6 +1765,21 @@ function App() {
               <option value="auto">{t("whisperAuto")}</option>
               <option value="medium">{t("whisperFast")}</option>
               <option value="large-v3">{t("whisperBest")}</option>
+            </select>
+          </label>
+          <label title={t("ytCookiesHint")}>
+            {t("ytCookiesLabel")}
+            <select
+              value={ytCookiesBrowser}
+              onChange={(e) => setYtCookiesBrowser(e.target.value)}
+              disabled={isRunning}
+            >
+              <option value="">{t("ytCookiesOff")}</option>
+              <option value="firefox">Firefox</option>
+              <option value="chrome">Chrome</option>
+              <option value="chromium">Chromium</option>
+              <option value="brave">Brave</option>
+              <option value="edge">Edge</option>
             </select>
           </label>
           <label title={t("audioFormatHint")}>

@@ -160,6 +160,10 @@ def read_video_info(url: str) -> dict:
     """
     from yt_dlp import YoutubeDL
 
+    from pipeline.proc_utils import ensure_ffmpeg_on_path, yt_cookies_browser
+
+    # Deno (runtime JS do yt-dlp) na pasta bin do USKMaker - ver proc_utils
+    ensure_ffmpeg_on_path()
     opts = {
         "quiet": True,
         "no_warnings": True,
@@ -167,6 +171,9 @@ def read_video_info(url: str) -> dict:
         "noplaylist": True,
         "extract_flat": False,
     }
+    browser = yt_cookies_browser()
+    if browser:
+        opts["cookiesfrombrowser"] = (browser,)
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
 
@@ -180,13 +187,39 @@ def read_video_info(url: str) -> dict:
     }
 
 
+def classify_error(message: str) -> str:
+    """
+    Tipo do erro do yt-dlp, para a interface dizer O QUE fazer: "bot" (o
+    YouTube quer sessão logada - ligar os cookies resolve), "age", "private",
+    "unavailable", "cookies" (não deu pra ler os cookies do navegador) ou
+    "other".
+    """
+    low = message.lower()
+    if "sign in to confirm your age" in low:
+        return "age"
+    if "sign in to confirm you" in low:
+        return "bot"
+    if ("could not find" in low and "cookies" in low) or "failed to decrypt" in low \
+            or ("cookie" in low and "database" in low):
+        return "cookies"
+    if "private video" in low:
+        return "private"
+    if "video unavailable" in low:
+        return "unavailable"
+    return "other"
+
+
 if __name__ == "__main__":
     result: dict = {}
     try:
         if len(sys.argv) >= 2:
             result = read_video_info(sys.argv[1])
-    except Exception:
+    except Exception as e:
         # Mesma promessa do read_tags.py: isto é conveniência. Falhar aqui não
-        # pode impedir ninguém de gerar a música digitando os campos à mão.
-        result = {}
+        # pode impedir ninguém de gerar a música digitando os campos à mão -
+        # mas o MOTIVO vai junto, senão o usuário só vê "não deu" (antes o
+        # erro era engolido e o bloqueio "confirm you're not a bot" do YouTube
+        # aparecia como uma falha qualquer).
+        msg = str(e).replace("ERROR: ", "").strip()
+        result = {"error": classify_error(msg), "detail": msg[:300]}
     sys.stdout.write(json.dumps(result))

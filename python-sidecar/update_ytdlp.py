@@ -73,35 +73,24 @@ def build_upgrade_command(uv_exe: str, python_exe: str, prerelease: bool) -> lis
     """
     Comando de atualização, preservando o canal.
 
-    "yt-dlp[default]" (e não "yt-dlp" puro) é o extra que o próprio projeto
-    recomenda instalar no canal de teste - traz as dependências opcionais que
-    as correções mais novas às vezes passam a exigir.
+    "yt-dlp[default]" (e não "yt-dlp" puro) nos DOIS canais: é o extra que o
+    próprio projeto recomenda e traz o `yt-dlp-ejs`, o script que resolve os
+    desafios JavaScript do YouTube junto com o Deno. Sem ele o yt-dlp avisa
+    "challenge solver script ... skipped" e, logado com cookies, o YouTube
+    responde "The page needs to be reloaded" (medido 01/10/2026: o mesmo
+    vídeo passou assim que o yt-dlp-ejs entrou). Antes só o canal de teste
+    usava o extra.
     """
     cmd = [uv_exe, "pip", "install", "--python", python_exe, "--upgrade"]
     if prerelease:
-        cmd += ["--prerelease", "allow", "yt-dlp[default]"]
-    else:
-        cmd += ["yt-dlp"]
+        cmd += ["--prerelease", "allow"]
+    cmd += ["yt-dlp[default]"]
     return cmd
 
 
-def data_dir(env=None, windows: bool | None = None) -> Path | None:
-    """Pasta de dados do USKMaker - espelho do platform::data_dir do Rust.
-
-    Windows: %LOCALAPPDATA%\\USKMaker. Linux/macOS: $XDG_DATA_HOME/USKMaker
-    (só caminho absoluto, como manda a especificação XDG) ou
-    ~/.local/share/USKMaker. `env`/`windows` existem só para os testes.
-    """
-    env = os.environ if env is None else env
-    windows = (os.name == "nt") if windows is None else windows
-    if windows:
-        base = env.get("LOCALAPPDATA")
-        return Path(base) / "USKMaker" if base else None
-    xdg = env.get("XDG_DATA_HOME")
-    if xdg and xdg.startswith("/"):  # XDG é POSIX: absoluto = começa com /
-        return Path(xdg) / "USKMaker"
-    home = env.get("HOME")
-    return Path(home) / ".local" / "share" / "USKMaker" if home else None
+# data_dir mora em pipeline/proc_utils.py (o sidecar também precisa dela, pra
+# pôr a pasta bin no PATH); fica importada aqui com o mesmo nome.
+from pipeline.proc_utils import data_dir  # noqa: E402
 
 
 def find_uv() -> str | None:

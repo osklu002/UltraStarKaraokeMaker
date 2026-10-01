@@ -32,6 +32,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 
 def ffmpeg_exe() -> str:
@@ -88,6 +89,31 @@ def _expose_ffmpeg_dlls(ff_dir: str) -> None:
         pass
 
 
+def data_dir(env=None, windows: bool | None = None) -> Path | None:
+    """Pasta de dados do USKMaker - espelho do platform::data_dir do Rust.
+
+    Windows: %LOCALAPPDATA%\\USKMaker. Linux/macOS: $XDG_DATA_HOME/USKMaker
+    (só caminho absoluto, como manda a especificação XDG) ou
+    ~/.local/share/USKMaker. `env`/`windows` existem só para os testes.
+    """
+    env = os.environ if env is None else env
+    windows = (os.name == "nt") if windows is None else windows
+    if windows:
+        base = env.get("LOCALAPPDATA")
+        return Path(base) / "USKMaker" if base else None
+    xdg = env.get("XDG_DATA_HOME")
+    if xdg and xdg.startswith("/"):  # XDG é POSIX: absoluto = começa com /
+        return Path(xdg) / "USKMaker"
+    home = env.get("HOME")
+    return Path(home) / ".local" / "share" / "USKMaker" if home else None
+
+
+def _prepend_path(folder: str) -> None:
+    parts = os.environ.get("PATH", "").split(os.pathsep)
+    if folder and folder not in parts:
+        os.environ["PATH"] = os.pathsep.join([folder, *parts])
+
+
 def ensure_ffmpeg_on_path() -> None:
     """
     Coloca a PASTA do ffmpeg embutido no PATH do processo.
@@ -100,18 +126,46 @@ def ensure_ffmpeg_on_path() -> None:
     `FileNotFoundError: [WinError 2]`, MESMO com o ffmpeg embutido presente e
     tudo antes (download, separação) funcionando.
 
-    Idempotente. Sem USKMAKER_FFMPEG (dev com ffmpeg no PATH), não faz nada.
+    Também põe no PATH a pasta <pasta de dados>/bin quando ela existe, COM ou
+    SEM ffmpeg embutido: é onde o setup instala o Deno, o runtime JavaScript
+    que o yt-dlp procura no PATH para o YouTube. Antes isso só acontecia de
+    carona no ffmpeg embutido - e no Linux o ffmpeg vem da distro, então o
+    Deno instalado pelo setup-sidecar.sh nunca era achado (limitação anotada
+    no próprio script). Sem runtime JS o YouTube recusa mais pedidos.
+
+    Idempotente. Sem USKMAKER_FFMPEG e sem a pasta bin, não faz nada.
     """
+    base = data_dir()
+    if base is not None and (base / "bin").is_dir():
+        _prepend_path(str(base / "bin"))
     ff = os.environ.get("USKMAKER_FFMPEG")
     if not ff:
         return
     ff_dir = os.path.dirname(ff)
     if not ff_dir:
         return
-    parts = os.environ.get("PATH", "").split(os.pathsep)
-    if ff_dir not in parts:
-        os.environ["PATH"] = os.pathsep.join([ff_dir, *parts])
+    _prepend_path(ff_dir)
     _expose_ffmpeg_dlls(ff_dir)
+
+
+# Navegadores de onde o yt-dlp pode ler os cookies do YouTube (opção
+# --cookies-from-browser). O valor vem da interface (configuração "cookies do
+# YouTube"), POR CHAMADA, na env USKMAKER_YT_COOKIES_BROWSER.
+YT_COOKIE_BROWSERS = ("firefox", "chrome", "chromium", "brave", "edge")
+
+
+def yt_cookies_browser() -> str | None:
+    """
+    Navegador escolhido para os cookies do YouTube, ou None (desligado).
+
+    POR QUE (01/10/2026): o YouTube passou a exigir sessão logada para alguns
+    vídeos ("Sign in to confirm you're not a bot") - nenhum runtime JS resolve
+    isso, só cookies de um navegador em que o usuário está logado. Valor fora
+    da lista vale como desligado, para uma configuração corrompida nunca
+    virar um argumento estranho na linha de comando do yt-dlp.
+    """
+    value = (os.environ.get("USKMAKER_YT_COOKIES_BROWSER") or "").strip().lower()
+    return value if value in YT_COOKIE_BROWSERS else None
 
 
 def _print_captured(text: str) -> None:

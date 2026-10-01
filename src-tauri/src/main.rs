@@ -256,7 +256,16 @@ struct PipelineInput {
     /// no estado inicial do React, não aqui).
     #[serde(default)]
     max_video_resolution: i64,
+    /// Navegador de onde o yt-dlp lê os cookies do YouTube ("firefox",
+    /// "chrome"...), para vídeos em que o YouTube exige sessão logada
+    /// ("confirm you're not a bot"). Vazio = desligado (o default de sempre).
+    #[serde(default)]
+    yt_cookies_browser: String,
 }
+
+/// Env que o sidecar lê para os cookies do YouTube (pipeline/proc_utils.py,
+/// yt_cookies_browser). Vazio/ausente = desligado.
+const YT_COOKIES_ENV: &str = "USKMAKER_YT_COOKIES_BROWSER";
 
 fn default_whisper_model() -> String {
     "auto".to_string()
@@ -676,6 +685,7 @@ async fn run_pipeline(
         "synced_lyrics_path": synced_path.as_ref().map(|p| p.to_string_lossy().to_string()),
         "audio_format": input.audio_format,
         "max_video_resolution": input.max_video_resolution,
+        "yt_cookies_browser": input.yt_cookies_browser,
         // Idioma das mensagens do log da pipeline = idioma da interface
         // (29/09/2026, ver python-sidecar/pipeline/i18n.py). Vai POR JOB porque
         // o servidor é persistente e o usuário pode trocar o idioma no meio da
@@ -1766,12 +1776,16 @@ async fn fetch_video_info(
     app: tauri::AppHandle,
     url: String,
     lang: String,
+    yt_cookies_browser: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let (code_dir, python_exe) = resolve_sidecar(&app, &lang)?;
     let script = code_dir.join("read_video_info.py");
 
     let mut cmd = Command::new(&python_exe);
     cmd.arg(&script).arg(&url);
+    if let Some(b) = yt_cookies_browser.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+        cmd.env(YT_COOKIES_ENV, b);
+    }
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
@@ -1851,6 +1865,7 @@ async fn fetch_package_assets(
     artist: String,
     want: String,
     lang: String,
+    yt_cookies_browser: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let (code_dir, python_exe) = resolve_sidecar(&app, &lang)?;
     let script = code_dir.join("fetch_assets.py");
@@ -1861,6 +1876,9 @@ async fn fetch_package_assets(
         .arg("--title").arg(&title)
         .arg("--artist").arg(&artist)
         .arg("--want").arg(&want);
+    if let Some(b) = yt_cookies_browser.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+        cmd.env(YT_COOKIES_ENV, b);
+    }
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **"YouTube cookies" option, for videos YouTube only serves to signed-in users.** Some videos now fail with "Sign in to confirm you're not a bot", whatever the app does. Pick the browser you are signed in to YouTube with (Firefox, Chrome, Chromium, Brave or Edge) and the downloads and the video-info lookup use its YouTube cookies. Off by default.
+
 ### Changed
 
 - **Swedish songs are aligned with a Swedish model.** The whole-lyrics aligner used one multilingual model for every language, whose alphabet is only a-z: "å", "ä" and "ö" were reduced to "a" and "o" before aligning, so "så" and "sa", "för" and "for" looked the same to it. Swedish songs now use KBLab's Swedish wav2vec2 (`KBLab/wav2vec2-large-voxrex-swedish`), which knows those letters - the same model the Whisper-based aligner already downloaded for Swedish, so nothing new is downloaded. On 7 Swedish songs with hand-made charts, on the same vocal tracks: words within 1 s, median 0.981 → 1.000 (mean 0.947 → 0.982); the slowest 10% of word starts 145 → 123 ms off; word ends 95 → 86 ms off. The multilingual model put whole lines seconds off in 2 of the 7 songs, which the Swedish one fixes; it did worse on 1 of them, and the median word start is 7 ms less precise (44 → 51 ms). Its confidence is also higher: one song that would have fallen back to the previous aligner (47% of its words low-confidence) now stays on the new one (4%). If the Swedish model can't be loaded, the multilingual one is used. Other languages are unchanged.
@@ -19,6 +23,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **English and Swedish words are split into syllables with their own language's rules.** Every language used to be split with the Brazilian Portuguese dictionary, which splits English words too much ("lo-ve"); every extra syllable is an extra note. Measured against how the hand-made charts of a ~500-song library split each word: English words split exactly like the chart 0.78 → 0.85 (and extra syllables 13.6% → 0.5%), Swedish 0.89 → 0.91. "gonna", "wanna" and "gotta" are sung as two syllables. Other languages are unchanged.
 
 - **Fewer `~` notes.** A syllable now has to last at least 0.8 s (was 0.45 s) before it can be split into `~` continuation notes. With the new syllable timing, `~` had crept up to about 9% of all notes against 3.6% in hand-made charts; now about 4.7% (6.9% on songs it was not tuned on), with note accuracy unchanged.
+
+### Fixed
+
+- **"Could not read the video info" never said why.** The lookup swallowed every error. It now tells you when YouTube wants a sign-in (and to turn on the cookies option), or when the browser's cookies could not be read.
+- **Signed-in YouTube downloads failed with "The page needs to be reloaded".** yt-dlp solves YouTube's JavaScript challenges with Deno plus a small solver package, `yt-dlp-ejs`, which the setup never installed. yt-dlp is now installed (and updated) as `yt-dlp[default]`, which includes it. Found with the new cookies option: the same video went through as soon as the package was in.
+- **On Linux, the Deno that the setup installs was never used.** yt-dlp needs a JavaScript runtime for YouTube, and without one YouTube refuses more requests. The setup puts Deno in the app's `bin` folder, but that folder only reached the `PATH` together with a bundled ffmpeg, which Linux normally doesn't have. It is now always added when it exists.
+- **"Generate again" now shows the options first.** It used to start right away with a copy of the previous run, options included, so an option changed in between (for example turning on YouTube cookies) was silently ignored. It now puts the song back into the form (link or file, lyrics, title, artist, language) and scrolls up; check the options and press Generate.
+- **The "fetch video info" and lyrics search buttons show a spinner while they work.** A lookup can take several seconds (longer with YouTube cookies), and the button only changed its text, so it looked frozen.
 
 ## [0.23.2] — 2026-10-01 (contribution by [@osklu002](https://github.com/osklu002))
 

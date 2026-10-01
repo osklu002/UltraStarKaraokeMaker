@@ -42,13 +42,17 @@
 # Quando um download começar a falhar (403 Forbidden, "unable to download
 # video data"), atualize só o yt-dlp - sem refazer o ambiente inteiro:
 #
-#   uv pip install --python <venv>\Scripts\python.exe --upgrade yt-dlp
+#   uv pip install --python <venv>\Scripts\python.exe --upgrade "yt-dlp[default]"
 #
 # Se a versão estável ainda estiver quebrada, o canal de teste costuma ter a
 # correção antes (é onde as quebras do YouTube são consertadas primeiro):
 #
 #   ...--upgrade --prerelease allow "yt-dlp[default]"
-yt-dlp>=2024.4.9
+#
+# O extra [default] traz o yt-dlp-ejs, o script que resolve os desafios
+# JavaScript do YouTube (junto com o Deno que o setup instala). Sem ele,
+# logado com cookies, o YouTube responde "The page needs to be reloaded".
+yt-dlp[default]>=2024.4.9
 
 # --- Separação vocal ---
 demucs>=4.0.1

@@ -6,6 +6,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Opção "Cookies do YouTube", para vídeos que o YouTube só libera para quem está logado.** Alguns vídeos agora falham com "Sign in to confirm you're not a bot", faça o app o que fizer. Escolha o navegador em que você está logado no YouTube (Firefox, Chrome, Chromium, Brave ou Edge) e os downloads e a leitura dos dados do vídeo passam a usar os cookies do YouTube dele. Desligada por padrão.
+
 ### Alterado
 
 - **Músicas em sueco são alinhadas com um modelo sueco.** O alinhador da letra inteira usava um modelo multilíngue para todos os idiomas, cujo alfabeto é só a-z: "å", "ä" e "ö" viravam "a" e "o" antes de alinhar, então "så" e "sa", "för" e "for" eram a mesma coisa para ele. As músicas em sueco agora usam o wav2vec2 sueco do KBLab (`KBLab/wav2vec2-large-voxrex-swedish`), que conhece essas letras - o mesmo modelo que o alinhador pelo Whisper já baixava para o sueco, então nada novo é baixado. Em 7 músicas suecas com charts feitos à mão, nas mesmas faixas de voz: palavras a até 1 s, mediana 0,981 → 1,000 (média 0,947 → 0,982); os 10% de inícios de palavra mais errados 145 → 123 ms fora; fins de palavra 95 → 86 ms fora. O modelo multilíngue errava linhas inteiras por segundos em 2 das 7 músicas, o que o sueco corrige; ele foi pior em 1 delas, e a mediana do início da palavra fica 7 ms menos precisa (44 → 51 ms). A confiança dele também é mais alta: uma música que voltaria ao alinhador anterior (47% das palavras de confiança baixa) agora fica no novo (4%). Se o modelo sueco não carregar, fica o multilíngue. Os outros idiomas não mudam.
@@ -19,6 +23,14 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - **Palavras em inglês e sueco são divididas em sílabas com as regras do próprio idioma.** Todo idioma usava o dicionário do português do Brasil, que divide demais as palavras em inglês ("lo-ve"); cada sílaba a mais é uma nota a mais. Medido contra a divisão dos charts feitos à mão de uma biblioteca de ~500 músicas: palavras em inglês divididas igual ao chart 0,78 → 0,85 (e sílabas a mais 13,6% → 0,5%), em sueco 0,89 → 0,91. "gonna", "wanna" e "gotta" são cantados em duas sílabas. Os outros idiomas não mudam.
 
 - **Menos notas `~`.** Uma sílaba agora precisa durar pelo menos 0,8 s (antes 0,45 s) para poder virar notas de continuação `~`. Com a nova divisão silábica, o `~` tinha subido para cerca de 9% das notas contra 3,6% nos charts feitos à mão; agora fica em cerca de 4,7% (6,9% nas músicas que não foram usadas para ajustar), sem mudar a precisão das notas.
+
+### Corrigido
+
+- **"Não consegui ler os dados do vídeo" nunca dizia o motivo.** A leitura engolia qualquer erro. Agora avisa quando o YouTube pede login (e sugere ligar a opção de cookies) ou quando não deu para ler os cookies do navegador.
+- **Downloads do YouTube logado falhavam com "The page needs to be reloaded".** O yt-dlp resolve os desafios JavaScript do YouTube com o Deno mais um pacote pequeno, o `yt-dlp-ejs`, que o setup nunca instalava. Agora o yt-dlp é instalado (e atualizado) como `yt-dlp[default]`, que o inclui. Achado com a nova opção de cookies: o mesmo vídeo passou assim que o pacote entrou.
+- **No Linux, o Deno que o setup instala nunca era usado.** O yt-dlp precisa de um runtime JavaScript para o YouTube, e sem ele o YouTube recusa mais pedidos. O setup põe o Deno na pasta `bin` do app, mas essa pasta só entrava no `PATH` junto com um ffmpeg embutido, que no Linux normalmente não existe. Agora ela entra sempre que existe.
+- **"Gerar de novo" agora mostra as opções antes.** Antes começava na hora com uma cópia da geração anterior, opções incluídas, então uma opção trocada no meio (por exemplo, ligar os cookies do YouTube) era ignorada sem aviso. Agora a música volta para o formulário (link ou arquivo, letra, título, artista, idioma) e a tela sobe; confira as opções e aperte Gerar.
+- **Os botões de ler os dados do vídeo e de buscar a letra mostram um indicador enquanto trabalham.** A consulta pode levar alguns segundos (mais com os cookies do YouTube), e o botão só mudava o texto, parecendo travado.
 
 ## [0.23.2] - 2026-10-01 (contribuição [@osklu002](https://github.com/osklu002))
 
