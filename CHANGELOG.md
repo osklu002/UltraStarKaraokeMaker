@@ -6,6 +6,14 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Pacotes para Linux: `.deb`, `.rpm` e AppImage.** Até agora, quem usa Linux precisava compilar o app a partir do código. O build no Linux agora gera os três, e um novo workflow de CI (`build-linux.yml`) os monta a cada push e os anexa aos releases com tag, ao lado do instalador do Windows. O `.deb` e o `.rpm` puxam o ffmpeg da distribuição (o `.rpm` pede `/usr/bin/ffmpeg`, então o `ffmpeg-free` do próprio Fedora basta). Montado no Ubuntu 22.04, o AppImage também roda em distribuições de 2022 para cá. O ambiente de IA é configurado como no Windows, pelo botão **"Configurar ambiente de IA"** (`setup-sidecar.sh`). O README ganhou os passos de instalação no Linux (fecha o #15).
+
+### Corrigido
+
+- **"Abrir pasta" no AppImage não entrega mais ao gerenciador de arquivos o GTK do próprio AppImage.** O lançador do AppImage exporta caminhos para as bibliotecas GTK que ele leva junto, e todo programa que o app inicia as herda - inclusive o gerenciador de arquivos que o `xdg-open` abre, que carregaria essas bibliotecas no lugar das do sistema. O app agora remove essas variáveis antes de abrir uma pasta; fora do AppImage nada muda.
+
 ## [0.23.2] - 2026-10-01 (contribuição [@osklu002](https://github.com/osklu002))
 
 ### Corrigido

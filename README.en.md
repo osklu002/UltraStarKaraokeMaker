@@ -21,7 +21,7 @@ The pipeline has six steps:
 
 ## Stack
 
-- **Interface**: Tauri v1 + React 18 + TypeScript + Vite — bilingual (PT-BR/EN, detects the system language and can be switched anytime from the header)
+- **Interface**: Tauri v2 + React 18 + TypeScript + Vite — bilingual (PT-BR/EN, detects the system language and can be switched anytime from the header)
 - **Format-writing core**: Rust (`rust-core`, crate `uskmaker_core`)
 - **AI pipeline**: Python (sidecar), with WhisperX, Demucs, librosa, SwiftF0, pyphen
 - **Architecture**: the frontend calls Rust (Tauri), which invokes the Python sidecar; Python exports an intermediate JSON (`song_data.json`) and Rust is the one that writes the final `.txt` from it.
@@ -29,13 +29,13 @@ The pipeline has six steps:
 ## Requirements
 
 - **Python 3.12** (tested with 3.12.10)
-- **NVIDIA GPU with CUDA** — developed and tested on an RTX 4060 (8 GB VRAM). It runs on CPU, but vocal separation and alignment get much slower.
+- **NVIDIA GPU with CUDA** — developed and tested on an RTX 4060 (8 GB VRAM). On Linux, AMD GPUs work too, through ROCm (tested on an RX 7800 XT). It runs on CPU, but vocal separation and alignment get much slower.
 - **Node.js** and **Rust** (stable toolchain), for the Tauri part.
-- **ffmpeg** with `libvorbis` support (to produce `.ogg`). With the installer (Option A) it is **downloaded automatically** by `setup-sidecar.ps1`; in development mode, have it on your PATH.
+- **ffmpeg** with `libvorbis` support (to produce `.ogg`). With the Windows installer (Option A) it is **downloaded automatically** by `setup-sidecar.ps1`; on Linux it comes from your distribution (the `.deb`/`.rpm` install it); in development mode, have it on your PATH.
 
 ## Installation
 
-### Option A — Installer (recommended for regular use)
+### Option A (Windows) — Installer (recommended for regular use)
 
 1. Download the installer (`USKMaker_x.y.z_x64-setup.exe`) from the [Releases](https://github.com/walterfr/UltraStarKaraokeMaker/releases) page and install it normally.
 2. Open USKMaker and click **"Set up AI environment"**. It downloads Python 3.12 (via `uv`), a bundled ffmpeg (with libvorbis) and the AI libraries automatically, with a live progress bar (≈ 10–15 min the first time, ~2 GB, requires internet).
@@ -44,6 +44,20 @@ The pipeline has six steps:
 Requirements: Windows 10/11 and (optional but highly recommended) an NVIDIA GPU — without one, processing runs on CPU, ~10 min per song. **Python and ffmpeg don't need to be installed by hand** — the button handles it.
 
 > **Advanced users (manual setup):** the button is optional. You can set up the environment yourself in two ways: (a) run the `setup-sidecar.ps1` script from the install folder directly (right-click → "Run with PowerShell" — same as the button, from the terminal); or (b) build everything by hand with your own Python, as in **Option B** below (create the venv at `%LOCALAPPDATA%\USKMaker\venv`). The app also honors an `ffmpeg` already on your PATH and a venv you created manually.
+
+### Option A (Linux) — .deb, .rpm or AppImage
+
+1. Download the package for your distribution from the [Releases](https://github.com/walterfr/UltraStarKaraokeMaker/releases) page:
+   - **Debian / Ubuntu / Mint:** `sudo apt install ./USKMaker_x.y.z_amd64.deb`
+   - **Fedora / openSUSE:** `sudo dnf install ./USKMaker-x.y.z-1.x86_64.rpm`
+   - **Any distribution:** the `.AppImage` — `chmod +x USKMaker_x.y.z_amd64.AppImage` and run it.
+2. Install a C compiler and ffmpeg if you don't have them (the `.deb`/`.rpm` already pull in ffmpeg). The compiler builds one of the AI libraries during setup.
+   - Fedora: `sudo dnf install gcc ffmpeg-free` (Fedora's own `ffmpeg-free` is enough — it has libvorbis)
+   - Debian/Ubuntu: `sudo apt install build-essential ffmpeg`
+   - Arch: `sudo pacman -S base-devel ffmpeg`
+3. Open USKMaker and click **"Set up AI environment"**, as on Windows. It runs `setup-sidecar.sh`, which downloads Python 3.12 (via `uv`) and the AI libraries into `~/.local/share/USKMaker` — nothing is installed system-wide and it never asks for `sudo`. It picks the PyTorch build for your GPU: CUDA on NVIDIA, ROCm on AMD (needs `/dev/kfd`, i.e. the amdgpu driver), CPU otherwise.
+
+The script checks for the compiler and ffmpeg first and tells you the install command for your distribution if one is missing. To run it from a terminal instead of the button: `bash /usr/lib/USKMaker/_up_/scripts/setup-sidecar.sh` (`.deb`/`.rpm`), or `bash scripts/setup-sidecar.sh` from the repository.
 
 ### Option B — Development environment
 
@@ -62,6 +76,8 @@ python -c "import torch; print('CUDA:', torch.cuda.is_available())"
 If `CUDA` returns `False`, review your driver/CUDA version before continuing (the pipeline was designed to run on GPU).
 
 > **Note:** WhisperX downloads models on first run and may ask for a Hugging Face token. Set it via the `HF_TOKEN` environment variable or through `huggingface-cli` login. **Never** put the token in the code.
+
+On Linux the steps are the same, with `python3.12 -m venv venv` and `source venv/bin/activate`; pick the PyTorch index for your GPU — `cu126` for NVIDIA, `rocm6.4` for AMD, `cpu` without a GPU.
 
 #### 2. Tauri app
 
@@ -92,7 +108,7 @@ Fully functional end to end through the GUI. All scoped milestones are complete:
 - **Rust core** — `.txt` writing with output identical to the Python prototype, covered by tests.
 - **Tauri + UI integration** — complete flow through the interface: environment check on startup (AI/ffmpeg/GPU), real-time lyric validation (catches "(2x)", "[Chorus]", .lrc timestamps before burning GPU time), step list with state and typical duration, a cancel button that kills the process tree, collapsed technical log and a result with cover, metadata and per-confidence note counts. Preferences and window state persist across sessions.
 - **Metadata and video** — title/artist auto-filled from the file's tags; automatic cover/year/genre (local and network sources); `#BACKGROUND` image (optional fanart.tv, with cover fallback) and optional YouTube video in the package.
-- **Distribution** — NSIS installer + assisted AI environment setup (`setup-sidecar.ps1`).
+- **Distribution** — NSIS installer on Windows, `.deb`/`.rpm`/AppImage on Linux, plus assisted AI environment setup (`setup-sidecar.ps1` / `setup-sidecar.sh`).
 - **Manual review** — integrated Yass-style editor: waveform timeline, playback (mix or vocals only), note editing by drag/keyboard, phrase breaks, global GAP and undo/redo; saving rewrites `song_data.json` and regenerates the `.txt` through the Rust core.
 
 ## Support the project

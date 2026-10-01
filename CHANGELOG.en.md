@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Linux packages: `.deb`, `.rpm` and AppImage.** Until now Linux users had to build the app from source. The Linux build now produces all three, and a new CI workflow (`build-linux.yml`) builds them on every push and attaches them to tagged releases, next to the Windows installer. The `.deb` and `.rpm` pull in the distribution's ffmpeg (the `.rpm` asks for `/usr/bin/ffmpeg`, so Fedora's own `ffmpeg-free` is enough). Built on Ubuntu 22.04, so the AppImage also runs on distributions from 2022 on. The AI environment is set up the same way as on Windows, with the **"Set up AI environment"** button (`setup-sidecar.sh`). The README now has Linux install steps (closes #15).
+
+### Fixed
+
+- **"Open folder" from the AppImage no longer hands the file manager the AppImage's own GTK.** The AppImage launcher exports paths to the GTK libraries it carries, and every program the app starts inherits them - including the file manager that `xdg-open` launches, which would then load those libraries instead of the system's. The app now removes those variables before opening a folder; nothing changes outside the AppImage.
+
 ## [0.23.2] — 2026-10-01 (contribution by [@osklu002](https://github.com/osklu002))
 
 ### Fixed
