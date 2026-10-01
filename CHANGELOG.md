@@ -6,6 +6,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+<<<<<<< HEAD
 ### Adicionado
 
 - **Opção "Cookies do YouTube", para vídeos que o YouTube só libera para quem está logado.** Alguns vídeos agora falham com "Sign in to confirm you're not a bot", faça o app o que fizer. Escolha o navegador em que você está logado no YouTube (Firefox, Chrome, Chromium, Brave ou Edge) e os downloads e a leitura dos dados do vídeo passam a usar os cookies do YouTube dele. Desligada por padrão.
@@ -26,6 +27,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Corrigido
 
+- **Músicas com acento no artista ou no título não apareciam no UltraStar Deluxe.** O UltraStar Deluxe 2026.8.1 (o Flatpak) ignora calado a música cuja pasta ou arquivo tem letra fora do ASCII - nada no log, nem com `-Debug`; um trace de acesso a arquivos mostrou que ele nem abre a pasta. "Oskar Linnros - Från och med Du" não aparecia; renomeada para ASCII, carregou. Os nomes de pasta e de arquivo agora levam letras simples: "Från" vira "Fran", "Açaí" "Acai", "Ø" "O", "ß" "ss", e o apóstrofo curvo vira reto. O `#TITLE` e o `#ARTIST` dentro do `.txt` continuam com acento, então o jogo mostra o título de verdade. Pacotes gerados antes disto ficam com a pasta antiga; gerar uma dessas músicas de novo cria, ao lado, uma pasta nova com o nome simples.
 - **"Não consegui ler os dados do vídeo" nunca dizia o motivo.** A leitura engolia qualquer erro. Agora avisa quando o YouTube pede login (e sugere ligar a opção de cookies) ou quando não deu para ler os cookies do navegador.
 - **Downloads do YouTube logado falhavam com "The page needs to be reloaded".** O yt-dlp resolve os desafios JavaScript do YouTube com o Deno mais um pacote pequeno, o `yt-dlp-ejs`, que o setup nunca instalava. Agora o yt-dlp é instalado (e atualizado) como `yt-dlp[default]`, que o inclui. Achado com a nova opção de cookies: o mesmo vídeo passou assim que o pacote entrou.
 - **No Linux, o Deno que o setup instala nunca era usado.** O yt-dlp precisa de um runtime JavaScript para o YouTube, e sem ele o YouTube recusa mais pedidos. O setup põe o Deno na pasta `bin` do app, mas essa pasta só entrava no `PATH` junto com um ffmpeg embutido, que no Linux normalmente não existe. Agora ela entra sempre que existe.

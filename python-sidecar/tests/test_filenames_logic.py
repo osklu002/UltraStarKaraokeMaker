@@ -7,6 +7,8 @@ Os três casos de "bug real" abaixo foram reproduzidos de verdade em
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pipeline.filenames import sanitize_filename  # noqa: E402
@@ -68,9 +70,30 @@ def test_nome_normal_passa_intacto():
     assert sanitize_filename("Rita Lee - Sangue Latino") == "Rita Lee - Sangue Latino"
 
 
-def test_acentos_preservados():
-    # só caractere ILEGAL sai - acento é perfeitamente válido em NTFS
-    assert sanitize_filename("Djavan - Açaí") == "Djavan - Açaí"
+# Espelho de ACENTOS_PARA_ASCII no main.rs (sanitize_tests): mesmas entradas,
+# mesmas saídas - o Rust cria a pasta, o Python os arquivos dentro.
+ACENTOS_PARA_ASCII = [
+    ("Oskar Linnros - Från och med Du", "Oskar Linnros - Fran och med Du"),
+    ("Djavan - Açaí", "Djavan - Acai"),
+    ("Björk - Jóga", "Bjork - Joga"),
+    ("Die Ärzte - Männer sind Schweine", "Die Arzte - Manner sind Schweine"),
+    ("Sigur Rós - Ágætis byrjun", "Sigur Ros - Agaetis byrjun"),
+    ("MØ - Lean On", "MO - Lean On"),
+    ("Mø - Final Song", "Mo - Final Song"),
+    ("Æ - Straße ẞ", "AE - Strasse SS"),
+    ("Don’t Stop ‘Me’", "Don't Stop 'Me'"),
+    # forma de compatibilidade: NFKD antes da tabela, a barra larga vira hífen
+    ("ＡＣ／ＤＣ", "AC-DC"),
+]
+
+
+@pytest.mark.parametrize("raw,expected", ACENTOS_PARA_ASCII)
+def test_acentos_viram_ascii(raw, expected):
+    # o UltraStar Deluxe (Flatpak 2026.8.1) ignora calado pasta/arquivo com
+    # letra fora do ASCII
+    out = sanitize_filename(raw)
+    assert out == expected
+    assert out.isascii()
 
 
 def test_titulo_so_de_pontuacao_nao_vira_vazio():
