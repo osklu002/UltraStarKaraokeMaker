@@ -1,0 +1,33 @@
+{
+  "bundle": {
+    "targets": [
+      "deb",
+      "rpm",
+      "appimage"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/256x256.png",
+      "icons/512x512.png"
+    ],
+    "publisher": "walterfr",
+    "homepage": "https://github.com/walterfr/UltraStarKaraokeMaker",
+    "category": "Music",
+    "shortDescription": "AI UltraStar karaoke package generator",
+    "longDescription": "USKMaker turns a song into an UltraStar karaoke package: it separates the vocals, aligns the lyrics and writes the notes with AI. The AI environment is installed on first run by the setup-sidecar.sh script, from inside the app.",
+    "linux": {
+      "deb": {
+        "depends": [
+          "ffmpeg"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "/usr/bin/ffmpeg"
+        ]
+      }
+    }
+  }
+}

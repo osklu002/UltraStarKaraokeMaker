@@ -1,0 +1,103 @@
+name: Build Linux packages
+
+# Compila o USKMaker para Linux (.deb, .rpm e AppImage) e deixa os pacotes
+# disponíveis como artefato da execução - o equivalente Linux do
+# build-windows.yml. Os alvos vêm do src-tauri/tauri.linux.conf.json, que o
+# Tauri mescla sozinho por cima do tauri.conf.json quando roda no Linux.
+#
+# Como no Windows, o sidecar Python NÃO é empacotado: o app instala o ambiente
+# de IA na primeira execução, via setup-sidecar.sh.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - "feature/**"
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # 22.04 e não ubuntu-latest: o AppImage carrega a glibc de onde foi
+    # compilado como piso - montado no 22.04 roda em distros de 2022 para cá;
+    # montado no 24.04 recusaria abrir no 22.04 e derivadas (Mint 21, Pop 22).
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Lista das dependências de sistema do Tauri v2 (tauri.app, "Linux
+      # Prerequisites"), mais libdbus-1-dev para as notificações.
+      - name: Dependências de sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libdbus-1-dev
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache das dependências Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: Instalar dependências do front-end
+        run: npm ci
+
+      - name: Checar tipos (TypeScript)
+        run: npx tsc --noEmit
+
+      - name: Testes do rust-core
+        run: cargo test --manifest-path rust-core/Cargo.toml
+
+      # Testes do src-tauri: no Windows eles não rodam no CI, mas aqui cobrem
+      # o platform.rs (pasta XDG, layout do venv, grupo de processo).
+      - name: Testes do src-tauri
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build dos pacotes
+        run: npm run tauri build
+
+      - name: Publicar os pacotes como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: USKMaker-linux-packages
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Anexar pacotes ao Release do GitHub
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
